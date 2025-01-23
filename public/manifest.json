@@ -1,6 +1,6 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "Look School",
+  "name": "Classroom information display",
   "icons": [
     {
       "src": "favicon.ico",
