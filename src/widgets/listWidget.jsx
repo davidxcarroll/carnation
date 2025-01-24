@@ -62,7 +62,7 @@ const ListWidget = () => {
       case 'check':
         return checked ? 'check' : 'check_box_outline_blank';
       case 'bullet':
-        return 'radio_button_unchecked';
+        return 'fiber_manual_record';
       case 'number':
         return `counter_${index + 1}`;
     }
