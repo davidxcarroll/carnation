@@ -177,7 +177,7 @@ const TimerWidget = () => {
           </div>
         ))}
       </div>
-      <div className="w-full flex flex-row justify-around">
+      <div className="w-full flex flex-row items-center justify-around">
         <span
           className={`w-fit h-fit flex items-center justify-center material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${showPlayButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
           onClick={showPlayButton ? handleStart : undefined}
@@ -191,7 +191,7 @@ const TimerWidget = () => {
           pause
         </span>
         <span
-          className={`w-fit h-fit flex items-center justify-center material-symbols-rounded !text-4xl ${showStopButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+          className={`w-fit h-fit flex items-center justify-center material-symbols-rounded [font-size:clamp(1.4rem,2.4vw,5.2rem)] ${showStopButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
           onClick={showStopButton ? handleStop : undefined}
         >
           square

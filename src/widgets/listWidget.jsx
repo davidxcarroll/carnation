@@ -99,7 +99,7 @@ const ListWidget = () => {
 
       {items.map((item, index) => (
         <React.Fragment key={index}>
-          <div className="w-full h-[.25vw] bg-amber-200 rounded-full" />
+          <div className="w-full h-full min-h-2 max-h-3 bg-amber-200 rounded-full" />
           <div className="flex flex-row gap-4 items-center justify-center">
             <span 
               onClick={() => toggleItem(index)}
@@ -119,7 +119,7 @@ const ListWidget = () => {
           </div>
         </React.Fragment>
       ))}
-      <div className="w-full h-[.25vw] bg-amber-200 rounded-full" />
+      <div className="w-full h-full min-h-2 max-h-3 bg-amber-200 rounded-full" />
     </div>
   );
 };
