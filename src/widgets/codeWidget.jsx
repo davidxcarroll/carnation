@@ -31,7 +31,7 @@ const CodeWidget = () => {
   return (
     <div ref={containerRef} className="col-span-1 row-span-3 flex flex-col gap-4 items-center justify-between p-8 text-center bg-fuchsia-200 text-pink-600">
       <input
-        className="w-full h-11 text-center bg-transparent outline-none placeholder-pink-300"
+        className="w-full h-11 text-center bg-transparent outline-none placeholder-pink-300 truncate"
         placeholder="Code title"
         value={title}
         onChange={(e) => setTitle(e.target.value)}

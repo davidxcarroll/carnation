@@ -82,7 +82,7 @@ const ListWidget = () => {
     <div className="col-span-1 row-span-3 flex flex-col justify-between p-8 bg-amber-100 text-orange-600">
       <div className="flex flex-row gap-2 items-center justify-center">
         <input
-          className="w-full h-11 bg-transparent outline-none placeholder-amber-200"
+          className="w-full h-11 bg-transparent outline-none placeholder-amber-200 truncate"
           placeholder="List title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -110,7 +110,7 @@ const ListWidget = () => {
               {getListItemIcon(index, item.checked)}
             </span>
             <input
-              className="w-full h-11 bg-transparent outline-none placeholder-amber-200"
+              className="w-full h-11 bg-transparent outline-none placeholder-amber-200 truncate"
               placeholder="List item"
               value={item.text}
               onChange={(e) => updateItemText(index, e.target.value)}
