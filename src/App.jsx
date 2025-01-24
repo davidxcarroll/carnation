@@ -7,7 +7,6 @@ import ListWidget from './widgets/listWidget';
 import TimerWidget from './widgets/timerWidget';
 
 const LookSchoolApp = () => {
-  const [url, setUrl] = useState(DEFAULT_URL);
   const [activeSignal, setActiveSignal] = useState(null);
 
   return (
