@@ -13,7 +13,7 @@ const ListWidget = () => {
   });
 
   const [title, setTitle] = useState(() => {
-    return localStorage.getItem('listTitle') || '';
+    return localStorage.getItem('listTitle') || 'To-do List';
   });
 
   const [listType, setListType] = useState('check');

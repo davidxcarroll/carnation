@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 
-const DEFAULT_URL = 'https://hs.parkrose.k12.or.us/';
-const DEFAULT_TITLE = 'Parkrose High';
+const DEFAULT_TITLE = 'Mr. Dorr\'s Website';
+const DEFAULT_URL = 'mrdorr.info';
 
 const CodeWidget = () => {
   const containerRef = useRef(null);

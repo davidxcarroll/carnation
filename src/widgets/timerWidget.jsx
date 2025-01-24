@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const TimerWidget = () => {
   const [minutes, setMinutes] = useState([0, 0]);
@@ -6,6 +6,9 @@ const TimerWidget = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isCountingUp, setIsCountingUp] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const audioRef = useRef(null);
+  const [endTime, setEndTime] = useState(null);
 
   const isInitialState = minutes[0] === 0 && minutes[1] === 0 && seconds[0] === 0 && seconds[1] === 0;
 
@@ -29,13 +32,14 @@ const TimerWidget = () => {
     });
   };
 
-  const [endTime, setEndTime] = useState(null);
-
   const decrementTimer = () => {
     const now = Date.now();
     const timeLeft = endTime - now;
 
     if (timeLeft <= 0) {
+      if (!isMuted && audioRef.current) {
+        audioRef.current.play();
+      }
       setIsRunning(false);
       setIsPaused(false);
       setMinutes([0, 0]);
@@ -50,6 +54,10 @@ const TimerWidget = () => {
     
     setMinutes([Math.floor(m / 10), m % 10]);
     setSeconds([Math.floor(s / 10), s % 10]);
+  };
+
+  const toggleMute = () => {
+    setIsMuted(!isMuted);
   };
 
   useEffect(() => {
@@ -105,10 +113,13 @@ const TimerWidget = () => {
       } else {
         setSeconds(prevSeconds => {
           const newSeconds = [...prevSeconds];
-          const newValue = (newSeconds[digitIndex - 2] + change + 10) % 10;
-          // Prevent invalid seconds values
-          if (digitIndex - 2 === 0 && newValue > 5) {
-            return prevSeconds;
+          let newValue;
+          if (digitIndex - 2 === 0) {
+            // For tens place of seconds, cycle between 0-5
+            newValue = (newSeconds[digitIndex - 2] + change + 6) % 6;
+          } else {
+            // For ones place of seconds, cycle between 0-9
+            newValue = (newSeconds[digitIndex - 2] + change + 10) % 10;
           }
           newSeconds[digitIndex - 2] = newValue;
           return newSeconds;
@@ -123,12 +134,13 @@ const TimerWidget = () => {
   const showStopButton = isRunning || isPaused;
 
   return (
-    <div className="col-span-1 row-span-2 flex flex-col items-center justify-evenly p-8 pt-4 text-center bg-emerald-800 text-lime-300">
+    <div className="col-span-1 row-span-2 flex flex-col items-center justify-around p-8 pt-4 text-center bg-emerald-800 text-lime-300">
+      <audio ref={audioRef} src="/sounds/mixkit-racing-countdown-timer-1051.wav" />
       <div className="w-full flex flex-row items-center justify-between">
         {[0, 1].map(digitIndex => (
           <div key={digitIndex} className="w-16 h-full flex flex-col items-center justify-between">
             <span
-              className={`w-12 h-12 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, 1)}
             >
               keyboard_arrow_up
@@ -137,7 +149,7 @@ const TimerWidget = () => {
               {minutes[digitIndex]}
             </div>
             <span
-              className={`w-12 h-12 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, -1)}
             >
               keyboard_arrow_down
@@ -148,16 +160,16 @@ const TimerWidget = () => {
         {[2, 3].map(digitIndex => (
           <div key={digitIndex} className="w-16 h-full flex flex-col items-center justify-between">
             <span
-              className={`w-12 h-12 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, 1)}
             >
               keyboard_arrow_up
             </span>
-                          <div className={`w-12 flex justify-center text-9xl leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
+            <div className={`w-12 flex justify-center text-9xl leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
               {seconds[digitIndex - 2]}
             </div>
             <span
-              className={`w-12 h-12 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, -1)}
             >
               keyboard_arrow_down
@@ -183,6 +195,12 @@ const TimerWidget = () => {
           onClick={showStopButton ? handleStop : undefined}
         >
           square
+        </span>
+        <span
+          className={`w-12 h-12 flex items-center justify-center material-symbols-rounded !text-5xl ${isRunning && !isPaused ? 'text-emerald-700' : 'text-lime-300 hover:text-lime-100 cursor-pointer'}`}
+          onClick={isRunning && !isPaused ? undefined : toggleMute}
+        >
+          {isMuted ? 'volume_off' : 'volume_up'}
         </span>
       </div>
     </div>
