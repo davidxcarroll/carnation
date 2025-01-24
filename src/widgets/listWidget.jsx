@@ -4,9 +4,9 @@ const ListWidget = () => {
   const [items, setItems] = useState(() => {
     const saved = localStorage.getItem('listItems');
     return saved ? JSON.parse(saved) : [
-      { checked: true, text: '' },
-      { checked: true, text: '' },
-      { checked: true, text: '' },
+      { checked: false, text: '' },
+      { checked: false, text: '' },
+      { checked: false, text: '' },
       { checked: false, text: '' },
       { checked: false, text: '' }
     ];
