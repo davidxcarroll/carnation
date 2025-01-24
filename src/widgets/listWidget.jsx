@@ -79,10 +79,10 @@ const ListWidget = () => {
   };
 
   return (
-    <div className="col-span-1 row-span-3 flex flex-col justify-between p-8 bg-amber-100 text-orange-600">
+    <div className="col-span-1 row-span-3 flex flex-col justify-between p-20 pt-8 bg-amber-100 text-orange-600">
       <div className="flex flex-row gap-2 items-center justify-center">
         <input
-          className="w-full h-11 bg-transparent outline-none placeholder-amber-200 truncate"
+          className="w-full h-fit bg-transparent outline-none placeholder-amber-200 truncate"
           placeholder="List title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -91,7 +91,7 @@ const ListWidget = () => {
         
         <span 
           onClick={toggleListType}
-          className="w-12 h-12 material-symbols-rounded !text-5xl text-orange-600 hover:text-orange-400 cursor-pointer"
+          className="w-fit h-fit material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] text-orange-600 hover:text-orange-400 cursor-pointer"
         >
           {getListToggleIcon()}
         </span>
@@ -99,18 +99,18 @@ const ListWidget = () => {
 
       {items.map((item, index) => (
         <React.Fragment key={index}>
-          <div className="w-full h-1 bg-amber-200" />
-          <div className="flex flex-row gap-2 items-center justify-center">
+          <div className="w-full h-[.25vw] bg-amber-200 rounded-full" />
+          <div className="flex flex-row gap-4 items-center justify-center">
             <span 
               onClick={() => toggleItem(index)}
-              className={`w-12 h-12 material-symbols-rounded !text-5xl 
+              className={`w-fit h-fit material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] 
                 ${listType === 'check' ? 'cursor-pointer' : 'cursor-default'}
                 ${getIconColorClass(item)}`}
             >
               {getListItemIcon(index, item.checked)}
             </span>
             <input
-              className="w-full h-11 bg-transparent outline-none placeholder-amber-200 truncate"
+              className="w-full h-fit bg-transparent outline-none placeholder-amber-200 truncate"
               placeholder="List item"
               value={item.text}
               onChange={(e) => updateItemText(index, e.target.value)}
@@ -119,7 +119,7 @@ const ListWidget = () => {
           </div>
         </React.Fragment>
       ))}
-      <div className="w-full h-1 bg-amber-200" />
+      <div className="w-full h-[.25vw] bg-amber-200 rounded-full" />
     </div>
   );
 };

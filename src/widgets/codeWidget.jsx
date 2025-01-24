@@ -29,9 +29,9 @@ const CodeWidget = () => {
   }, []);
 
   return (
-    <div ref={containerRef} className="col-span-1 row-span-3 flex flex-col gap-4 items-center justify-between p-8 text-center bg-fuchsia-200 text-pink-600">
+    <div ref={containerRef} className="col-span-1 row-span-3 flex flex-col gap-6 items-center justify-between p-8 text-center bg-fuchsia-200 text-pink-600">
       <input
-        className="w-full h-11 text-center bg-transparent outline-none placeholder-pink-300 truncate"
+        className="w-full h-fit text-center bg-transparent outline-none placeholder-pink-300 truncate"
         placeholder="Code title"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
@@ -39,14 +39,15 @@ const CodeWidget = () => {
       />
       <QRCodeSVG
         value={url}
-        size={256}
+        width="100%"
+        height="100%"
         bgColor={colors.bg}
         fgColor={colors.fg}
         level="L"
         includeMargin={false}
       />
       <input
-        className="w-full h-11 text-center bg-transparent outline-none placeholder-pink-200 truncate"
+        className="w-full h-fit text-center bg-transparent outline-none placeholder-pink-200 truncate"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         type="text"

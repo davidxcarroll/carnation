@@ -136,40 +136,40 @@ const TimerWidget = () => {
   return (
     <div className="col-span-1 row-span-2 flex flex-col items-center justify-around p-8 pt-4 text-center bg-emerald-800 text-lime-300">
       <audio ref={audioRef} src="/sounds/mixkit-racing-countdown-timer-1051.wav" />
-      <div className="w-full flex flex-row items-center justify-between">
+      <div className="w-full flex flex-row items-center justify-around">
         {[0, 1].map(digitIndex => (
-          <div key={digitIndex} className="w-16 h-full flex flex-col items-center justify-between">
+          <div key={digitIndex} className="w-fit h-full flex flex-col items-center justify-between">
             <span
-              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-fit h-fit -my-2 z-10 material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, 1)}
             >
               keyboard_arrow_up
             </span>
-            <div className={`w-12 flex justify-center text-9xl leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
+            <div className={`w-fit flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
               {minutes[digitIndex]}
             </div>
             <span
-              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-fit h-fit -my-2 z-10 material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, -1)}
             >
               keyboard_arrow_down
             </span>
           </div>
         ))}
-        <div className={`w-4 flex items-center justify-center text-8xl text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>:</div>
+        <div className={`w-fit flex items-center justify-center [font-size:clamp(4rem,8vw,30rem)] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>:</div>
         {[2, 3].map(digitIndex => (
-          <div key={digitIndex} className="w-16 h-full flex flex-col items-center justify-between">
+          <div key={digitIndex} className="w-fit h-full flex flex-col items-center justify-between">
             <span
-              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-fit h-fit -my-2 z-10 material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, 1)}
             >
               keyboard_arrow_up
             </span>
-            <div className={`w-12 flex justify-center text-9xl leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
+            <div className={`w-fit flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
               {seconds[digitIndex - 2]}
             </div>
             <span
-              className={`w-12 h-12 -my-2 z-10 material-symbols-rounded !text-5xl ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+              className={`w-fit h-fit -my-2 z-10 material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${canAdjustTime ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
               onClick={() => handleArrowClick(digitIndex, -1)}
             >
               keyboard_arrow_down
@@ -179,25 +179,25 @@ const TimerWidget = () => {
       </div>
       <div className="w-full flex flex-row justify-around">
         <span
-          className={`w-12 h-12 flex items-center justify-center material-symbols-rounded !text-5xl ${showPlayButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+          className={`w-fit h-fit flex items-center justify-center material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${showPlayButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
           onClick={showPlayButton ? handleStart : undefined}
         >
           play_arrow
         </span>
         <span
-          className={`w-12 h-12 flex items-center justify-center material-symbols-rounded !text-5xl ${showPauseButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+          className={`w-fit h-fit flex items-center justify-center material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${showPauseButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
           onClick={showPauseButton ? handlePause : undefined}
         >
           pause
         </span>
         <span
-          className={`w-12 h-12 flex items-center justify-center material-symbols-rounded !text-4xl ${showStopButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
+          className={`w-fit h-fit flex items-center justify-center material-symbols-rounded !text-4xl ${showStopButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
           onClick={showStopButton ? handleStop : undefined}
         >
           square
         </span>
         <span
-          className={`w-12 h-12 flex items-center justify-center material-symbols-rounded !text-5xl ${isRunning && !isPaused ? 'text-emerald-700' : 'text-lime-300 hover:text-lime-100 cursor-pointer'}`}
+          className={`w-fit h-fit flex items-center justify-center material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${isRunning && !isPaused ? 'text-emerald-700' : 'text-lime-300 hover:text-lime-100 cursor-pointer'}`}
           onClick={isRunning && !isPaused ? undefined : toggleMute}
         >
           {isMuted ? 'volume_off' : 'volume_up'}

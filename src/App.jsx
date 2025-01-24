@@ -9,7 +9,7 @@ import TimerWidget from './widgets/timerWidget';
 
 const LookSchoolApp = () => {
   return (
-    <div className="w-screen h-[100dvh] min-h-[-webkit-fill-available] grid grid-cols-[2fr_auto_3fr] grid-rows-5 font-pangram text-4xl select-none">
+    <div className="w-screen h-screen min-h-screen grid grid-cols-[2fr_auto_3fr] grid-rows-5 font-pangram [font-size:clamp(2rem,3vw,6rem)] select-none">
       <TimerWidget />
       <SignalWidget />
       <CodeWidget />
