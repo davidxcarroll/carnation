@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 
+const DEFAULT_URL = 'https://hs.parkrose.k12.or.us/';
+const DEFAULT_TITLE = 'Parkrose High';
+
 const CodeWidget = () => {
   const containerRef = useRef(null);
-  const [url, setUrl] = useState(() => localStorage.getItem('codeUrl') || 'hazeltine.co');
-  const [title, setTitle] = useState(() => localStorage.getItem('codeTitle') || '');
+  const [url, setUrl] = useState(() => localStorage.getItem('codeUrl') || DEFAULT_URL);
+  const [title, setTitle] = useState(() => localStorage.getItem('codeTitle') || DEFAULT_TITLE);
   const [colors, setColors] = useState({ bg: '#FCE7F3', fg: '#DB2777' });
 
   useEffect(() => {
