@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import './index.css';
-import { DEFAULT_URL } from './config';
 
 import DateWidget from './widgets/dateWidget';
 import CodeWidget from './widgets/codeWidget';
