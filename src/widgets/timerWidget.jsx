@@ -6,13 +6,29 @@ const TimerWidget = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isCountingUp, setIsCountingUp] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const audioRef = useRef(null);
+  const alarmRef = useRef(null);
+  const tickRef = useRef(null);
+  const buttonClickRef = useRef(null);
   const [endTime, setEndTime] = useState(null);
 
   const isInitialState = minutes[0] === 0 && minutes[1] === 0 && seconds[0] === 0 && seconds[1] === 0;
 
+  const playButtonSound = () => {
+    if (buttonClickRef.current) {
+      buttonClickRef.current.currentTime = 0;
+      buttonClickRef.current.play().catch(error => console.error('Error playing button sound:', error));
+    }
+  };
+
+  const playTick = () => {
+    if (tickRef.current) {
+      tickRef.current.currentTime = 0;
+      tickRef.current.play();
+    }
+  };
+
   const incrementTimer = () => {
+    playTick();
     setSeconds(prevSeconds => {
       const [secondsTens, secondsOnes] = prevSeconds;
       if (secondsOnes === 9) {
@@ -33,12 +49,13 @@ const TimerWidget = () => {
   };
 
   const decrementTimer = () => {
+    playTick();
     const now = Date.now();
     const timeLeft = endTime - now;
 
     if (timeLeft <= 0) {
-      if (!isMuted && audioRef.current) {
-        audioRef.current.play();
+      if (alarmRef.current) {
+        alarmRef.current.play();
       }
       setIsRunning(false);
       setIsPaused(false);
@@ -56,10 +73,6 @@ const TimerWidget = () => {
     setSeconds([Math.floor(s / 10), s % 10]);
   };
 
-  const toggleMute = () => {
-    setIsMuted(!isMuted);
-  };
-
   useEffect(() => {
     let intervalId;
     if (isRunning && !isPaused) {
@@ -75,6 +88,7 @@ const TimerWidget = () => {
   }, [isRunning, isPaused, isCountingUp]);
 
   const handleStart = () => {
+    playButtonSound();
     if (!isRunning && !isPaused) {
       setIsCountingUp(isInitialState);
       if (!isInitialState) {
@@ -90,10 +104,12 @@ const TimerWidget = () => {
   };
 
   const handlePause = () => {
+    playButtonSound();
     setIsPaused(true);
   };
 
   const handleStop = () => {
+    playButtonSound();
     setIsRunning(false);
     setIsPaused(false);
     setMinutes([0, 0]);
@@ -104,6 +120,7 @@ const TimerWidget = () => {
 
   const handleArrowClick = (digitIndex, change) => {
     if (!isRunning && !isPaused) {
+      playButtonSound();
       if (digitIndex < 2) {
         setMinutes(prevMinutes => {
           const newMinutes = [...prevMinutes];
@@ -115,10 +132,8 @@ const TimerWidget = () => {
           const newSeconds = [...prevSeconds];
           let newValue;
           if (digitIndex - 2 === 0) {
-            // For tens place of seconds, cycle between 0-5
             newValue = (newSeconds[digitIndex - 2] + change + 6) % 6;
           } else {
-            // For ones place of seconds, cycle between 0-9
             newValue = (newSeconds[digitIndex - 2] + change + 10) % 10;
           }
           newSeconds[digitIndex - 2] = newValue;
@@ -135,7 +150,10 @@ const TimerWidget = () => {
 
   return (
     <div className="col-span-1 row-span-2 flex flex-col items-center justify-around p-8 pt-4 text-center bg-emerald-800 text-lime-300">
-      <audio ref={audioRef} src="/sounds/mixkit-racing-countdown-timer-1051.wav" />
+      <audio ref={alarmRef} src="/sounds/mixkit-long-clock-gong-1067.wav" />
+      <audio ref={tickRef} src="/sounds/mixkit-wall-clock-tick-tock-1060-slice.mp3" />
+      <audio ref={buttonClickRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
+
       <div className="w-full flex flex-row items-center justify-around">
         {[0, 1].map(digitIndex => (
           <div key={digitIndex} className="w-fit h-full flex flex-col items-center justify-between">
@@ -145,7 +163,7 @@ const TimerWidget = () => {
             >
               keyboard_arrow_up
             </span>
-            <div className={`w-fit flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
+            <div className={`w-[.7em] flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
               {minutes[digitIndex]}
             </div>
             <span
@@ -165,7 +183,7 @@ const TimerWidget = () => {
             >
               keyboard_arrow_up
             </span>
-            <div className={`w-fit flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
+            <div className={`w-[.7em] flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
               {seconds[digitIndex - 2]}
             </div>
             <span
@@ -177,7 +195,7 @@ const TimerWidget = () => {
           </div>
         ))}
       </div>
-      <div className="w-full flex flex-row items-center justify-around">
+      <div className="w-full flex flex-row items-center justify-evenly">
         <span
           className={`w-fit h-fit flex items-center justify-center material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${showPlayButton ? 'text-lime-300 hover:text-lime-100 cursor-pointer' : 'text-emerald-700'}`}
           onClick={showPlayButton ? handleStart : undefined}
@@ -195,12 +213,6 @@ const TimerWidget = () => {
           onClick={showStopButton ? handleStop : undefined}
         >
           square
-        </span>
-        <span
-          className={`w-fit h-fit flex items-center justify-center material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] ${isRunning && !isPaused ? 'text-emerald-700' : 'text-lime-300 hover:text-lime-100 cursor-pointer'}`}
-          onClick={isRunning && !isPaused ? undefined : toggleMute}
-        >
-          {isMuted ? 'volume_off' : 'volume_up'}
         </span>
       </div>
     </div>

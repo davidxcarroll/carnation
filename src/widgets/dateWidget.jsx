@@ -26,7 +26,7 @@ const DateWidget = () => {
   };
 
   return (
-    <div className="row-span-3 p-20 pt-8 flex flex-col items-center justify-between bg-blue-600 text-cyan-200 text-center">
+    <div className="row-span-3 p-[3vw] pt-8 flex flex-col items-center justify-between bg-blue-600 text-cyan-200 text-center">
       <div className="">Today is</div>
       <div className="">{dateParts.weekday}</div>
       <div className="text-[5em] leading-[.8em]">{dateParts.day}</div>

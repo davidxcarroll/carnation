@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const ListWidget = () => {
   const [items, setItems] = useState(() => {
@@ -17,6 +17,8 @@ const ListWidget = () => {
   });
 
   const [listType, setListType] = useState('check');
+  const checkboxAudioRef = useRef(null);
+  const toggleAudioRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('listItems', JSON.stringify(items));
@@ -26,7 +28,22 @@ const ListWidget = () => {
     localStorage.setItem('listTitle', title);
   }, [title]);
 
+  const playCheckboxSound = () => {
+    if (checkboxAudioRef.current) {
+      checkboxAudioRef.current.currentTime = 0;
+      checkboxAudioRef.current.play().catch(error => console.error('Error playing checkbox sound:', error));
+    }
+  };
+
+  const playToggleSound = () => {
+    if (toggleAudioRef.current) {
+      toggleAudioRef.current.currentTime = 0;
+      toggleAudioRef.current.play().catch(error => console.error('Error playing toggle sound:', error));
+    }
+  };
+
   const toggleListType = () => {
+    playToggleSound();
     setListType(current => {
       switch(current) {
         case 'check': return 'bullet';
@@ -38,6 +55,7 @@ const ListWidget = () => {
 
   const toggleItem = (index) => {
     if (listType !== 'check') return;
+    playCheckboxSound();
     setItems(items.map((item, i) => 
       i === index ? { ...item, checked: !item.checked } : item
     ));
@@ -72,14 +90,19 @@ const ListWidget = () => {
     if (item.text === '') return 'text-amber-200';
     
     if (listType === 'check') {
-      return item.checked ? 'text-orange-600 hover:text-orange-400' : 'text-amber-200 hover:text-amber-300';
+      return item.checked 
+        ? 'text-orange-600 hover:text-orange-400 scale-150' 
+        : 'text-amber-200 hover:text-amber-300';
     }
     
     return 'text-orange-600';
   };
 
   return (
-    <div className="col-span-1 row-span-3 flex flex-col justify-between p-20 pt-8 bg-amber-100 text-orange-600">
+    <div className="col-span-1 row-span-3 flex flex-col justify-between p-[3vw] pt-8 bg-amber-100 text-orange-600">
+      <audio ref={checkboxAudioRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
+      <audio ref={toggleAudioRef} src="/sounds/mixkit-paper-slide-1530-trim.mp3" />
+
       <div className="flex flex-row gap-2 items-center justify-center">
         <input
           className="w-full h-fit bg-transparent outline-none placeholder-amber-200 truncate"
@@ -100,7 +123,7 @@ const ListWidget = () => {
       {items.map((item, index) => (
         <React.Fragment key={index}>
           <div className="w-full h-full min-h-2 max-h-3 bg-amber-200 rounded-full" />
-          <div className="flex flex-row gap-4 items-center justify-center">
+          <div className="flex flex-row gap-2 items-center justify-center">
             <span 
               onClick={() => toggleItem(index)}
               className={`w-fit h-fit material-symbols-rounded [font-size:clamp(2rem,3vw,6rem)] 
@@ -110,7 +133,7 @@ const ListWidget = () => {
               {getListItemIcon(index, item.checked)}
             </span>
             <input
-              className="w-full h-fit bg-transparent outline-none placeholder-amber-200 truncate"
+              className="w-full h-fit pl-2 bg-transparent outline-none placeholder-amber-200 truncate"
               placeholder="List item"
               value={item.text}
               onChange={(e) => updateItemText(index, e.target.value)}
