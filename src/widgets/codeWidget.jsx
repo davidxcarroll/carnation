@@ -30,12 +30,12 @@ const CodeWidget = () => {
 
   return (
     <div ref={containerRef} className="col-span-1 row-span-3 flex flex-col gap-6 items-center justify-between p-8 text-center bg-fuchsia-200 text-pink-600">
-      <input
-        className="w-full h-fit text-center bg-transparent outline-none placeholder-pink-300 truncate"
+      <textarea
+        rows={1}
+        className="w-full min-h-14 text-center leading-[1.1em] bg-transparent outline-none placeholder-pink-300"
         placeholder="Code title"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        type="text"
       />
       <QRCodeSVG
         value={url}

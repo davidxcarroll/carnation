@@ -7,7 +7,6 @@ const TimerWidget = () => {
   const [isPaused, setIsPaused] = useState(false);
   const [isCountingUp, setIsCountingUp] = useState(false);
   const alarmRef = useRef(null);
-  const tickRef = useRef(null);
   const buttonClickRef = useRef(null);
   const [endTime, setEndTime] = useState(null);
 
@@ -20,15 +19,7 @@ const TimerWidget = () => {
     }
   };
 
-  const playTick = () => {
-    if (tickRef.current) {
-      tickRef.current.currentTime = 0;
-      tickRef.current.play();
-    }
-  };
-
   const incrementTimer = () => {
-    playTick();
     setSeconds(prevSeconds => {
       const [secondsTens, secondsOnes] = prevSeconds;
       if (secondsOnes === 9) {
@@ -49,7 +40,6 @@ const TimerWidget = () => {
   };
 
   const decrementTimer = () => {
-    playTick();
     const now = Date.now();
     const timeLeft = endTime - now;
 
@@ -150,8 +140,8 @@ const TimerWidget = () => {
 
   return (
     <div className="col-span-1 row-span-2 flex flex-col items-center justify-around p-8 pt-4 text-center bg-emerald-800 text-lime-300">
+      
       <audio ref={alarmRef} src="/sounds/mixkit-long-clock-gong-1067.wav" />
-      <audio ref={tickRef} src="/sounds/mixkit-wall-clock-tick-tock-1060-slice.mp3" />
       <audio ref={buttonClickRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
 
       <div className="w-full flex flex-row items-center justify-around">
