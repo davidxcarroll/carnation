@@ -94,7 +94,7 @@ const ListWidget = () => {
   };
 
   return (
-    <div className="col-span-1 row-span-3 flex flex-col justify-between p-[3vw] pt-[1vw] bg-amber-100 text-orange-600">
+    <div className="col-span-1 row-span-3 flex flex-col justify-between p-[3vw] pt-[1vw] pb-[2vw] bg-amber-100 text-orange-600">
       {/* Sound for toggling off and list type changes */}
       <audio ref={toggleOffAudioRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
       
@@ -120,7 +120,9 @@ const ListWidget = () => {
 
       {items.map((item, index) => (
         <React.Fragment key={index}>
-          <div className="w-full h-full min-h-2 max-h-3 bg-amber-200 rounded-full" />
+
+          <div className="w-full h-[.15em] bg-amber-200 rounded-full" />
+
           <div className="flex flex-row gap-2 items-center justify-center">
             <span 
               onClick={() => toggleItem(index)}
@@ -140,7 +142,6 @@ const ListWidget = () => {
           </div>
         </React.Fragment>
       ))}
-      <div className="w-full h-full min-h-2 max-h-3 bg-amber-200 rounded-full" />
     </div>
   );
 };
