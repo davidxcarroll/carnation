@@ -17,8 +17,8 @@ const ListWidget = () => {
   });
 
   const [listType, setListType] = useState('check');
-  const checkboxAudioRef = useRef(null);
-  const toggleAudioRef = useRef(null);
+  const toggleOffAudioRef = useRef(null);
+  const toggleOnAudioRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('listItems', JSON.stringify(items));
@@ -28,22 +28,16 @@ const ListWidget = () => {
     localStorage.setItem('listTitle', title);
   }, [title]);
 
-  const playCheckboxSound = () => {
-    if (checkboxAudioRef.current) {
-      checkboxAudioRef.current.currentTime = 0;
-      checkboxAudioRef.current.play().catch(error => console.error('Error playing checkbox sound:', error));
-    }
-  };
-
-  const playToggleSound = () => {
-    if (toggleAudioRef.current) {
-      toggleAudioRef.current.currentTime = 0;
-      toggleAudioRef.current.play().catch(error => console.error('Error playing toggle sound:', error));
+  const playToggleSound = (isCheckingOn) => {
+    const audioRef = isCheckingOn ? toggleOnAudioRef : toggleOffAudioRef;
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(error => console.error('Error playing sound:', error));
     }
   };
 
   const toggleListType = () => {
-    playToggleSound();
+    playToggleSound(false); // Use toggle-off sound for list type changes
     setListType(current => {
       switch(current) {
         case 'check': return 'bullet';
@@ -55,7 +49,8 @@ const ListWidget = () => {
 
   const toggleItem = (index) => {
     if (listType !== 'check') return;
-    playCheckboxSound();
+    const isCheckingOn = !items[index].checked;
+    playToggleSound(isCheckingOn);
     setItems(items.map((item, i) => 
       i === index ? { ...item, checked: !item.checked } : item
     ));
@@ -99,9 +94,12 @@ const ListWidget = () => {
   };
 
   return (
-    <div className="col-span-1 row-span-3 flex flex-col justify-between p-[3vw] pt-8 bg-amber-100 text-orange-600">
-      <audio ref={checkboxAudioRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
-      <audio ref={toggleAudioRef} src="/sounds/mixkit-paper-slide-1530-trim.mp3" />
+    <div className="col-span-1 row-span-3 flex flex-col justify-between p-[3vw] pt-[1vw] bg-amber-100 text-orange-600">
+      {/* Sound for toggling off and list type changes */}
+      <audio ref={toggleOffAudioRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
+      
+      {/* Sound for toggling checkmark on */}
+      <audio ref={toggleOnAudioRef} src="/sounds/mixkit-happy-bell-alert-601.wav" />
 
       <div className="flex flex-row gap-2 items-center justify-center">
         <input

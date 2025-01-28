@@ -7,6 +7,7 @@ const TimerWidget = () => {
   const [isPaused, setIsPaused] = useState(false);
   const [isCountingUp, setIsCountingUp] = useState(false);
   const alarmRef = useRef(null);
+  const playRef = useRef(null);
   const buttonClickRef = useRef(null);
   const [endTime, setEndTime] = useState(null);
 
@@ -16,6 +17,13 @@ const TimerWidget = () => {
     if (buttonClickRef.current) {
       buttonClickRef.current.currentTime = 0;
       buttonClickRef.current.play().catch(error => console.error('Error playing button sound:', error));
+    }
+  };
+
+  const playStartSound = () => {
+    if (playRef.current) {
+      playRef.current.currentTime = 0;
+      playRef.current.play().catch(error => console.error('Error playing start sound:', error));
     }
   };
 
@@ -78,7 +86,12 @@ const TimerWidget = () => {
   }, [isRunning, isPaused, isCountingUp]);
 
   const handleStart = () => {
-    playButtonSound();
+    if (!isPaused) {
+      playStartSound();
+    } else {
+      playButtonSound();
+    }
+    
     if (!isRunning && !isPaused) {
       setIsCountingUp(isInitialState);
       if (!isInitialState) {
@@ -141,7 +154,11 @@ const TimerWidget = () => {
   return (
     <div className="col-span-1 row-span-2 flex flex-col items-center justify-around p-8 pt-4 text-center bg-emerald-800 text-lime-300">
       
-      <audio ref={alarmRef} src="/sounds/mixkit-long-clock-gong-1067.wav" />
+      {/* alarm */}
+      <audio ref={alarmRef} src="/sounds/786243__sergequadrado__big-beat-loop-trim-2.mp3" />
+      {/* play */}
+      <audio ref={playRef} src="/sounds/mixkit-software-interface-start-2574.wav" />
+      {/* buttons */}
       <audio ref={buttonClickRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
 
       <div className="w-full flex flex-row items-center justify-around">
@@ -153,7 +170,7 @@ const TimerWidget = () => {
             >
               keyboard_arrow_up
             </span>
-            <div className={`w-[.7em] flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
+            <div className={`w-[.7em] flex justify-center [font-size:clamp(4rem,9vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
               {minutes[digitIndex]}
             </div>
             <span
@@ -164,7 +181,7 @@ const TimerWidget = () => {
             </span>
           </div>
         ))}
-        <div className={`w-fit flex items-center justify-center [font-size:clamp(4rem,8vw,30rem)] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>:</div>
+        <div className={`w-fit flex items-center justify-center [font-size:clamp(4rem,9vw,30rem)] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>:</div>
         {[2, 3].map(digitIndex => (
           <div key={digitIndex} className="w-fit h-full flex flex-col items-center justify-between">
             <span
@@ -173,7 +190,7 @@ const TimerWidget = () => {
             >
               keyboard_arrow_up
             </span>
-            <div className={`w-[.7em] flex justify-center [font-size:clamp(4rem,8vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
+            <div className={`w-[.7em] flex justify-center [font-size:clamp(4rem,9vw,30rem)] leading-[.9em] text-center ${isRunning && !isPaused ? 'text-white' : ''}`}>
               {seconds[digitIndex - 2]}
             </div>
             <span
