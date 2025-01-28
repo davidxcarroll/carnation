@@ -99,7 +99,7 @@ const ListWidget = () => {
       <audio ref={toggleOffAudioRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
       
       {/* Sound for toggling checkmark on */}
-      <audio ref={toggleOnAudioRef} src="/sounds/mixkit-happy-bell-alert-601.wav" />
+      <audio ref={toggleOnAudioRef} src="/sounds/mixkit-correct-answer-notification-947.wav" />
 
       <div className="flex flex-row gap-2 items-center justify-center">
         <input

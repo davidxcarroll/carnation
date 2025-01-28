@@ -9,6 +9,7 @@ const TimerWidget = () => {
   const alarmRef = useRef(null);
   const playRef = useRef(null);
   const buttonClickRef = useRef(null);
+  const stopSoundRef = useRef(null);
   const [endTime, setEndTime] = useState(null);
 
   const isInitialState = minutes[0] === 0 && minutes[1] === 0 && seconds[0] === 0 && seconds[1] === 0;
@@ -24,6 +25,13 @@ const TimerWidget = () => {
     if (playRef.current) {
       playRef.current.currentTime = 0;
       playRef.current.play().catch(error => console.error('Error playing start sound:', error));
+    }
+  };
+
+  const playStopSound = () => {
+    if (stopSoundRef.current) {
+      stopSoundRef.current.currentTime = 0;
+      stopSoundRef.current.play().catch(error => console.error('Error playing stop sound:', error));
     }
   };
 
@@ -112,7 +120,11 @@ const TimerWidget = () => {
   };
 
   const handleStop = () => {
-    playButtonSound();
+    if (isRunning && !isPaused) {
+      playStopSound();
+    } else {
+      playButtonSound();
+    }
     setIsRunning(false);
     setIsPaused(false);
     setMinutes([0, 0]);
@@ -154,12 +166,11 @@ const TimerWidget = () => {
   return (
     <div className="col-span-1 row-span-2 flex flex-col items-center justify-around p-8 pt-4 text-center bg-emerald-800 text-lime-300">
       
-      {/* alarm */}
+      {/* Audio elements */}
       <audio ref={alarmRef} src="/sounds/786243__sergequadrado__big-beat-loop-trim-2.mp3" />
-      {/* play */}
       <audio ref={playRef} src="/sounds/mixkit-software-interface-start-2574.wav" />
-      {/* buttons */}
       <audio ref={buttonClickRef} src="/sounds/mixkit-game-ball-tap-2073-trim.mp3" />
+      <audio ref={stopSoundRef} src="/sounds/mixkit-spring-metal-hit-2302-cut.mp3" />
 
       <div className="w-full flex flex-row items-center justify-around">
         {[0, 1].map(digitIndex => (
