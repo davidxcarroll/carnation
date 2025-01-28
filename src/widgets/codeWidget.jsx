@@ -3,18 +3,12 @@ import { QRCodeSVG } from 'qrcode.react';
 
 const DEFAULT_TITLE = 'Mr. Dorr\'s Website';
 const DEFAULT_URL = 'mrdorr.info';
-const DEFAULT_HEIGHT = 56;
 
 const CodeWidget = () => {
   const containerRef = useRef(null);
-  const textareaRef = useRef(null);
   const [url, setUrl] = useState(() => localStorage.getItem('codeUrl') || DEFAULT_URL);
   const [title, setTitle] = useState(() => localStorage.getItem('codeTitle') || DEFAULT_TITLE);
-  const [height, setHeight] = useState(() => parseInt(localStorage.getItem('codeHeight')) || DEFAULT_HEIGHT);
   const [colors, setColors] = useState({ bg: '#FCE7F3', fg: '#DB2777' });
-  const [isResizing, setIsResizing] = useState(false);
-  const [startY, setStartY] = useState(0);
-  const [startHeight, setStartHeight] = useState(0);
 
   useEffect(() => {
     localStorage.setItem('codeUrl', url);
@@ -23,13 +17,6 @@ const CodeWidget = () => {
   useEffect(() => {
     localStorage.setItem('codeTitle', title);
   }, [title]);
-
-  useEffect(() => {
-    localStorage.setItem('codeHeight', height);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = `${height}px`;
-    }
-  }, [height]);
 
   useEffect(() => {
     if (containerRef.current) {
@@ -41,50 +28,34 @@ const CodeWidget = () => {
     }
   }, []);
 
-  const startResize = (e) => {
-    setIsResizing(true);
-    setStartY(e.clientY);
-    setStartHeight(textareaRef.current.offsetHeight);
+  const sharedStyles = {
+    gridArea: '1 / 1 / 2 / 2',
+    lineHeight: '1.1em',
+    paddingBottom: '10px'
   };
-
-  const stopResize = () => {
-    setIsResizing(false);
-  };
-
-  const resize = (e) => {
-    if (isResizing && textareaRef.current) {
-      const newHeight = Math.max(DEFAULT_HEIGHT, startHeight + (e.clientY - startY));
-      setHeight(newHeight);
-    }
-  };
-
-  useEffect(() => {
-    if (isResizing) {
-      document.addEventListener('mousemove', resize);
-      document.addEventListener('mouseup', stopResize);
-    }
-    return () => {
-      document.removeEventListener('mousemove', resize);
-      document.removeEventListener('mouseup', stopResize);
-    };
-  }, [isResizing, startHeight, startY]);
 
   return (
     <div ref={containerRef} className="col-span-1 row-span-3 flex flex-col gap-2 items-center justify-between p-[2vw] text-center bg-fuchsia-200 text-pink-600">
-      <div className="relative w-full group">
+      <div 
+        className="w-full grid"
+        style={{ 
+          '--text-value': `"${title}"` 
+        }}
+      >
         <textarea
-          ref={textareaRef}
           rows={1}
-          className="w-full min-h-14 p-0 text-center leading-[1.1em] bg-transparent outline-none placeholder-pink-300 resize-none"
+          className="w-full p-0 text-center bg-transparent outline-none placeholder-pink-300 resize-none overflow-hidden col-start-1 row-start-1"
           placeholder="Code title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          style={sharedStyles}
         />
         <div 
-          className="absolute bottom-0 left-0 w-full cursor-ns-resize opacity-0 group-hover:opacity-100"
-          onMouseDown={startResize}
+          className="w-full p-0 text-center whitespace-pre-wrap invisible overflow-hidden col-start-1 row-start-1"
+          style={sharedStyles}
+          aria-hidden="true"
         >
-          <div className="w-full h-2 bg-pink-300 rounded-full" />
+          {title + ' '}
         </div>
       </div>
       <QRCodeSVG
