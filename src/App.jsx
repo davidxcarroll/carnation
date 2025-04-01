@@ -1,22 +1,15 @@
-import React, { useState } from 'react';
+import React from 'react';
 import './index.css';
 
-import DateWidget from './widgets/dateWidget';
-import CodeWidget from './widgets/codeWidget';
-import ListWidget from './widgets/listWidget';
-import SignalWidget from './widgets/signalWidget';
-import TimerWidget from './widgets/timerWidget';
-
-const LookSchoolApp = () => {
+const App = () => {
   return (
-    <div className="w-screen h-screen min-h-screen grid grid-cols-[2fr_auto_3fr] grid-rows-5 font-pangram [font-size:clamp(2rem,3vw,6rem)] select-none">
-      <TimerWidget />
-      <SignalWidget />
-      <CodeWidget />
-      <DateWidget />
-      <ListWidget />
+    <div className="min-h-screen bg-gray-100">
+      <div className="container mx-auto px-4 py-8">
+        <h1 className="text-4xl font-bold text-gray-900">Carnation</h1>
+        <p className="mt-4 text-gray-600">Welcome to your new app!</p>
+      </div>
     </div>
   );
 };
 
-export default LookSchoolApp;
+export default App;
