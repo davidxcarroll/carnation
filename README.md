@@ -1,13 +1,6 @@
 # Carnation
 
-A minimalist note-taking and idea organization application built with React and Firebase.
-
-## Features
-
-- Clean, distraction-free writing interface
-- Real-time synchronization with Firebase
-- Tag-based organization system
-- Note linking and contextual tools
+A research project.
 
 ## Development
 
