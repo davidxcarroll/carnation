@@ -4,5 +4,11 @@ service cloud.firestore {
     match /ideas/{ideaId} {
       allow read, write: if true;  // For now, allowing all access. We can add authentication later.
     }
+    match /tags/{tagId} {
+      allow read, write: if true;  // Allow access to tags collection
+    }
+    match /ideaTags/{ideaTagId} {
+      allow read, write: if true;  // Allow access to relationships between ideas and tags
+    }
   }
 } 

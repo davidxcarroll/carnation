@@ -6,7 +6,24 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        'pangram': ['Pangram Sans Rounded', 'sans-serif']
+        'geist': ['Geist', 'sans-serif'],
+        'pangram': ['Pangram Sans Rounded', 'sans-serif'],
+        'pangram-sans': ['Pangram Sans', 'sans-serif'],
+        'pangram-narrow': ['Pangram Sans Narrow', 'sans-serif'],
+        'object-sans': ['Object Sans', 'sans-serif'],
+        'nikkei': ['Nikkei Journal', 'serif'],
+        'nikkei-maru': ['Nikkei Maru', 'serif'],
+        'manrope': ['Manrope', 'sans-serif'],
+        'pressura': ['GT Pressura Extended', 'monospace'],
+        'pressura-ext': ['GT Pressura Extended', 'monospace'],
+        'pressura-std': ['GT Pressura Standard', 'monospace']
+      },
+      fontFeatureSettings: {
+        'ss01': '"ss01" 1',
+        'ss02': '"ss02" 1',
+        'ss03': '"ss03" 1',
+        'ss04': '"ss04" 1',
+        'ss-all': '"ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1',
       }
     }
   },

@@ -4,13 +4,18 @@
 @tailwind components;
 @tailwind utilities;
 
+html, body {
+  background-color: #171717;
+}
+
 /* MATERIAL SYMBOLS */
 
-.material-symbols-outlined {
+.material-symbols-rounded {
   font-variation-settings:
   'FILL' 1,
-  'wght' 500,
-  'GRAD' -25
+  'wght' 700,
+  'GRAD' 0,
+  'opsz' 20
 }
 
 /* CUSTOM CARET */
@@ -44,12 +49,164 @@
   50% { opacity: 0; }
 }
 
-/* PANGRAM SANS ROUNDED EXTRABOLD */
+/* GEIST */
+
+.geist {
+  font-family: "Geist", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-style: normal;
+}
+
+/* PANGRAM SANS FONTS */
 
 @font-face {
-  font-family: 'Pangram Sans Rounded';
-  src: url('./assets/PPPangramSansRounded-Extrabold.woff2') format('woff2'),
-       url('./assets/PPPangramSansRounded-Extrabold.woff') format('woff');
-  font-weight: 800;
+  font-family: 'Pangram Sans';
+  src: url('./assets/PPPangramSans-CompactRegular.woff2') format('woff2'),
+       url('./assets/PPPangramSans-CompactRegular.woff') format('woff');
+  font-weight: 400;
   font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+@font-face {
+  font-family: 'Pangram Sans';
+  src: url('./assets/PPPangramSans-Medium.woff2') format('woff2'),
+       url('./assets/PPPangramSans-Medium.woff') format('woff');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+@font-face {
+  font-family: 'Pangram Sans';
+  src: url('./assets/PPPangramSans-Semibold.woff2') format('woff2'),
+       url('./assets/PPPangramSans-Semibold.woff') format('woff');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+@font-face {
+  font-family: 'Pangram Sans Narrow';
+  src: url('./assets/PPPangramSans-NarrowSemibold.woff2') format('woff2'),
+       url('./assets/PPPangramSans-NarrowSemibold.woff') format('woff');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+/* add object sans regular and bold */
+@font-face {
+  font-family: 'Object Sans';
+  src: url('./assets/PPObjectSans-Regular.woff2') format('woff2'),
+       url('./assets/PPObjectSans-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+@font-face {
+  font-family: 'Object Sans';
+  src: url('./assets/PPObjectSans-Bold.woff2') format('woff2'),
+       url('./assets/PPObjectSans-Bold.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+/* add nikkei journal regular */
+@font-face {
+  font-family: 'Nikkei Journal';
+  src: url('./assets/PPNikkeiJournal-Regular.woff2') format('woff2'),
+       url('./assets/PPNikkeiJournal-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+/* add nikkei maru regular */
+@font-face {
+  font-family: 'Nikkei Maru';
+  src: url('./assets/PPNikkeiMaru-Regular.woff2') format('woff2'),
+       url('./assets/PPNikkeiMaru-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+/* GT Pressura Extended */
+@font-face {
+  font-family: 'GT Pressura Extended';
+  src: url('./assets/GT-Pressura-Extended-Regular.woff2') format('woff2'),
+       url('./assets/GT-Pressura-Extended-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GT Pressura Extended';
+  src: url('./assets/GT-Pressura-Extended-Medium.woff2') format('woff2'),
+       url('./assets/GT-Pressura-Extended-Medium.woff') format('woff');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GT Pressura Extended';
+  src: url('./assets/GT-Pressura-Extended-Bold.woff2') format('woff2'),
+       url('./assets/GT-Pressura-Extended-Bold.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'GT Pressura Extended';
+  src: url('./assets/GT-Pressura-Extended-Text.woff2') format('woff2'),
+       url('./assets/GT-Pressura-Extended-Text.woff') format('woff');
+  font-weight: 450;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* GT Pressura Standard */
+@font-face {
+  font-family: 'GT Pressura Standard';
+  src: url('./assets/GT-Pressura-Standard-Bold.woff2') format('woff2'),
+       url('./assets/GT-Pressura-Standard-Bold.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Stylistic Set Utilities */
+.ss-all {
+  font-feature-settings: "ss01" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+}
+
+.ss01 {
+  font-feature-settings: "ss01" 1;
+}
+
+.ss02 {
+  font-feature-settings: "ss02" 1;
+}
+
+.ss03 {
+  font-feature-settings: "ss03" 1;
+}
+
+.ss04 {
+  font-feature-settings: "ss04" 1;
 }
