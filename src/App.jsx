@@ -1131,7 +1131,7 @@ const App = () => {
 
                   {/* Add new tag button */}
                   <div
-                    className="w-fit flex justify-center items-center -mx-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/5 rounded-full whitespace-nowrap cursor-pointer"
+                    className="w-fit flex justify-center items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/5 rounded-full whitespace-nowrap cursor-pointer"
                     onMouseDown={(e) => {
                       e.stopPropagation();
                     }}
