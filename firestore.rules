@@ -10,5 +10,8 @@ service cloud.firestore {
     match /ideaTags/{ideaTagId} {
       allow read, write: if true;  // Allow access to relationships between ideas and tags
     }
+    match /notes/{noteId} {
+      allow read, write: if true;  // Allow access to notes collection
+    }
   }
 } 
