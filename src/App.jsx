@@ -18,8 +18,8 @@ const App = () => {
   const [ideaTags, setIdeaTags] = useState([]);
   const [globalTagCounts, setGlobalTagCounts] = useState({});
   const [activeTab, setActiveTab] = useState(null);
-  const [selectedTags, setSelectedTags] = useState({});
-  const [selectionState, setSelectionState] = useState('none');
+  const [selectedTags, setSelectedTags] = useState({ 'untagged': true });
+  const [selectionState, setSelectionState] = useState('all');
   const [newTagInputVisible, setNewTagInputVisible] = useState(false);
   const [newTagInputValue, setNewTagInputValue] = useState('');
   const [tagIdeasMap, setTagIdeasMap] = useState({});
@@ -30,6 +30,9 @@ const App = () => {
   const [ideaNotes, setIdeaNotes] = useState([]);
   // View layout state
   const [viewLayout, setViewLayout] = useState('horizontal');
+  // Title editing state
+  const [isTitleEditing, setIsTitleEditing] = useState(false);
+  const [titleEditValue, setTitleEditValue] = useState('');
 
   const editorRef = useRef(null);
   const columnRefs = useRef({});
@@ -37,6 +40,7 @@ const App = () => {
   const updateTimeoutRef = useRef(null);
   const newTagInputRef = useRef(null);
   const noteInputRef = useRef(null);
+  const titleEditRef = useRef(null);
   const ideasRef = collection(db, 'ideas');
   const tagsRef = collection(db, 'tags');
   const ideaTagsRef = collection(db, 'ideaTags');
@@ -119,6 +123,15 @@ const App = () => {
             ...doc.data()
           }));
           setTags(tagsData);
+
+          // Default to having all tags selected
+          const newSelectedTags = { ...selectedTags };
+          tagsData.forEach(tag => {
+            newSelectedTags[tag.id] = true;
+          });
+          setSelectedTags(newSelectedTags);
+          setSelectionState('all');
+
         } catch (error) {
           console.error("Error processing tags data:", error);
         }
@@ -234,7 +247,7 @@ const App = () => {
       const taggedIdeas = getIdeasByTag(tag.id);
       initializeColumnContent(tag.id, taggedIdeas);
     });
-  }, [ideas, tags, untaggedIdeas, tagIdeasMap, isInitialLoad]);
+  }, [ideas, tags, untaggedIdeas, tagIdeasMap, isInitialLoad, tags]);
 
   // Initialize editor styles
   useEffect(() => {
@@ -1051,6 +1064,11 @@ const App = () => {
     setSelectedTags(prev => {
       const newSelectedTags = { ...prev, [tagId]: !prev[tagId] };
 
+      // If this is the special 'untagged' tag, we need special handling
+      if (tagId === 'untagged') {
+        // Handle untagged logic here
+      }
+
       // Update the selection state (all, none, or indeterminate)
       updateSelectionState(newSelectedTags);
 
@@ -1063,7 +1081,7 @@ const App = () => {
     // Cycle through states: none -> all -> none
     if (selectionState === 'all') {
       // If all are selected, deselect all
-      const newSelectedTags = {};
+      const newSelectedTags = { 'untagged': false };
       tags.forEach(tag => {
         newSelectedTags[tag.id] = false;
       });
@@ -1071,7 +1089,7 @@ const App = () => {
       setSelectionState('none');
     } else {
       // If none or some are selected, select all
-      const newSelectedTags = {};
+      const newSelectedTags = { 'untagged': true };
       tags.forEach(tag => {
         newSelectedTags[tag.id] = true;
       });
@@ -1084,11 +1102,15 @@ const App = () => {
   const updateSelectionState = (selectedTagsObj) => {
     if (!tags.length) return;
 
+    // Count the total number of tag options (include untagged as a tag option)
+    const totalTagOptions = tags.length + 1;
+
+    // Count how many are selected
     const selectedCount = Object.values(selectedTagsObj).filter(Boolean).length;
 
     if (selectedCount === 0) {
       setSelectionState('none');
-    } else if (selectedCount === tags.length) {
+    } else if (selectedCount === totalTagOptions) {
       setSelectionState('all');
     } else {
       setSelectionState('indeterminate');
@@ -1099,6 +1121,25 @@ const App = () => {
   useEffect(() => {
     updateSelectionState(selectedTags);
   }, [tags]);
+
+  // Reinitialize column content when tag selection changes
+  useEffect(() => {
+    // Skip on first render
+    if (isInitialLoad) return;
+
+    // Reinitialize content for untagged column if it's selected
+    if (selectedTags['untagged']) {
+      initializeColumnContent('untagged', untaggedIdeas);
+    }
+
+    // Reinitialize content for each selected tag
+    tags.forEach(tag => {
+      if (selectedTags[tag.id]) {
+        const taggedIdeas = getIdeasByTag(tag.id);
+        initializeColumnContent(tag.id, taggedIdeas);
+      }
+    });
+  }, [selectedTags, untaggedIdeas, tagIdeasMap, isInitialLoad, tags]);
 
   // Handle new tag input change
   const handleNewTagInputChange = (e) => {
@@ -1622,64 +1663,165 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
     setViewLayout(layout);
   };
 
+  // Handle title edit change
+  const handleTitleEditChange = (e) => {
+    setTitleEditValue(e.target.value);
+  };
+
+  // Handle title edit keydown
+  const handleTitleEditKeyDown = async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await saveTitleEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelTitleEdit();
+    }
+  };
+
+  // Start editing title
+  const startTitleEdit = () => {
+    if (!focusedIdea) return;
+
+    // Set current content as initial value
+    setTitleEditValue(focusedIdea.content);
+    setIsTitleEditing(true);
+
+    // Focus the input after a brief delay
+    setTimeout(() => {
+      if (titleEditRef.current) {
+        titleEditRef.current.focus();
+        titleEditRef.current.select();
+      }
+    }, 50);
+  };
+
+  // Save title edit
+  const saveTitleEdit = async () => {
+    if (!focusedIdeaId || !titleEditValue.trim()) return;
+
+    try {
+      // Update in Firestore
+      await updateDoc(doc(db, 'ideas', focusedIdeaId), {
+        content: titleEditValue.trim(),
+        updatedAt: new Date()
+      });
+
+      // Also update locally for immediate feedback
+      setIdeas(prev => prev.map(idea =>
+        idea.id === focusedIdeaId
+          ? { ...idea, content: titleEditValue.trim(), updatedAt: new Date() }
+          : idea
+      ));
+
+      // Update UI in all columns where this idea appears
+      updateIdeaInAllColumns(focusedIdeaId, titleEditValue.trim());
+
+      // Exit edit mode
+      setIsTitleEditing(false);
+    } catch (error) {
+      console.error("Error updating idea title:", error);
+    }
+  };
+
+  // Cancel title edit
+  const cancelTitleEdit = () => {
+    setIsTitleEditing(false);
+    setTitleEditValue('');
+  };
+
+  // Update idea content in all columns where it appears
+  const updateIdeaInAllColumns = (ideaId, newContent) => {
+    // Update in untagged column if present
+    if (columnRefs.current.untagged && columnRefs.current.untagged.current) {
+      const ideaDiv = columnRefs.current.untagged.current.querySelector(`[data-idea-id="${ideaId}"]`);
+      if (ideaDiv) {
+        ideaDiv.innerHTML = newContent;
+      }
+    }
+
+    // Update in all tag columns
+    tags.forEach(tag => {
+      if (columnRefs.current[tag.id] && columnRefs.current[tag.id].current) {
+        const ideaDiv = columnRefs.current[tag.id].current.querySelector(`[data-idea-id="${ideaId}"]`);
+        if (ideaDiv) {
+          ideaDiv.innerHTML = newContent;
+        }
+      }
+    });
+  };
+
   return (
-    <div className="h-screen flex flex-row text-white/80 text-sm bg-neutral-900 selection:bg-rose-500 selection:text-white selection:text-white caret-rose-500 font-pressura font-normal">
+    <div className="h-screen flex flex-row text-white/80 text-sm bg-neutral-900 selection:bg-rose-500 selection:text-white selection:text-white caret-rose-500 font-pressura font-light">
+
       <div className="h-full flex flex-1 flex-col px-2 shadow-[1px_0_0_rgba(255,255,255,0.05)]">
 
         {/* Utility sidebar tabs */}
         {/* tab: view */}
         <div
-          className={`group w-10 h-10 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'view' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
+          className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'view' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
           onClick={() => handleTabClick('view')}
         >
-          <span className={`material-symbols-rounded text-base ${activeTab === 'view' ? 'text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>sort</span>
+          <span className={`material-symbols-rounded text-base ${activeTab === 'view' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>visibility</span>
         </div>
         {/* tab: tools */}
         <div
-          className={`group w-10 h-10 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tools' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
+          className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tools' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
           onClick={() => handleTabClick('tools')}
         >
-          <span className={`material-symbols-rounded text-base ${activeTab === 'tools' ? 'text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>widgets</span>
+          <span className={`material-symbols-rounded text-base ${activeTab === 'tools' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>widgets</span>
         </div>
         {/* tab: tips */}
         <div
-          className={`group w-10 h-10 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tips' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
+          className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tips' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
           onClick={() => handleTabClick('tips')}
         >
-          <span className={`material-symbols-rounded text-base ${activeTab === 'tips' ? 'text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>info</span>
+          <span className={`material-symbols-rounded text-base ${activeTab === 'tips' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>info</span>
         </div>
 
       </div>
 
       {/* Utility sidebar - only show when a tab is active */}
       {activeTab && (
-        <div className="idea-sidebar h-full min-w-[340px] max-w-[400px] flex flex-col pl-8 pr-10 overflow-auto bg-neutral-800">
+        <div className="idea-sidebar h-full min-w-[340px] max-w-[400px] flex flex-col px-8 overflow-auto shadow-[1px_0_0_rgba(255,255,255,0.05)]">
 
           {activeTab === 'view' && (
             <>
-              <div className="flex flex-row items-center justify-start gap-4 -mx-3 gap-1 pt-3 px-3 text-white">
+              <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
+                <div className="w-full">View</div>
+                <span
+                  className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
+                  onClick={() => setActiveTab(null)}
+                >
+                  close
+                </span>
+              </div>
+
+              <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+
+              <div className="flex flex-row items-center justify-start gap-6 -mx-3 gap-1 pt-3 px-3 text-white">
                 <div
                   className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'horizontal' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
                   onClick={() => handleViewLayoutToggle('horizontal')}
                 >
-                  <span className="material-symbols-rounded text-base">view_agenda</span>
+                  <span className={`material-symbols-rounded text-base ${viewLayout === 'horizontal' ? 'filled' : ''}`}>view_column_2</span>
                   Horizontal
                 </div>
                 <div
                   className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'vertical' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
                   onClick={() => handleViewLayoutToggle('vertical')}
                 >
-                  <span className="material-symbols-rounded text-base">view_column_2</span>
+                  <span className={`material-symbols-rounded text-base ${viewLayout === 'vertical' ? 'filled' : ''}`}>view_agenda</span>
                   Vertical
                 </div>
               </div>
 
-              <hr className="w-[calc(100%+22px)] my-3 -mx-3 border-[rgba(255,255,255,0.05)]" />
+              <hr className="w-full my-3 border-[rgba(255,255,255,0.05)]" />
 
               <div className="flex flex-row items-center justify-between gap-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
 
                 <div className="w-full flex flex-row items-center gap-1 pt-1 pb-2 select-none" onClick={toggleAllTags}>
-                  <span className="material-symbols-rounded text-base">
+                  <span className={`material-symbols-rounded text-base ${selectionState === 'all' || selectionState === 'indeterminate' ? 'filled' : ''}`}>
                     {selectionState === 'all' ? 'check_box' :
                       selectionState === 'indeterminate' ? 'indeterminate_check_box' :
                         'check_box_outline_blank'}
@@ -1690,6 +1832,18 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                 <div className="flex flex-row items-center gap-1">
                   <span className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white">tune</span>
                 </div>
+              </div>
+
+              {/* Untagged ideas item */}
+              <div
+                className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
+                onClick={() => toggleTagSelection('untagged')}
+              >
+                <span className={`material-symbols-rounded text-base ${selectedTags['untagged'] ? 'filled' : ''} ${!selectedTags['untagged'] ? 'opacity-10' : ''}`}>
+                  {selectedTags['untagged'] ? 'check' : 'check_box_outline_blank'}
+                </span>
+                <span className={`${!selectedTags['untagged'] ? 'opacity-40' : ''}`}>untagged</span>
+                <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
               </div>
 
               {/* show a list of tags */}
@@ -1709,7 +1863,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                     className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
                     onClick={() => toggleTagSelection(tag.id)}
                   >
-                    <span className={`material-symbols-rounded text-base ${!selectedTags[tag.id] ? 'opacity-10' : ''}`}>
+                    <span className={`material-symbols-rounded text-base ${selectedTags[tag.id] ? 'filled' : ''} ${!selectedTags[tag.id] ? 'opacity-10' : ''}`}>
                       {selectedTags[tag.id] ? 'check' : 'check_box_outline_blank'}
                     </span>
                     <span className={`${!selectedTags[tag.id] ? 'opacity-40' : ''}`}>{tag.name}</span>
@@ -1718,26 +1872,39 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                 );
               })}
 
-
-
-              <hr className="w-[calc(100%+22px)] my-3 -mx-3 border-[rgba(255,255,255,0.05)]" />
-
-
             </>
           )}
 
           {activeTab === 'tools' && (
-            <div className="w-fit flex flex-row items-center gap-1 -mx-3 gap-1 py-4 mt-1 px-3 text-white">
-              <span className="material-symbols-rounded text-base">widgets</span>
-              Tools
-            </div>
+            <>
+              <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
+                <div className="w-full">Tools</div>
+                <span
+                  className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
+                  onClick={() => setActiveTab(null)}
+                >
+                  close
+                </span>
+              </div>
+
+              <hr className="w-[calc(100%+22px)] -mx-3 border-[rgba(255,255,255,0.05)]" />
+            </>
           )}
 
           {activeTab === 'tips' && (
-            <div className="w-fit flex flex-row items-center gap-1 -mx-3 gap-1 py-4 mt-1 px-3 text-white">
-              <span className="material-symbols-rounded text-base">info</span>
-              Tips
-            </div>
+            <>
+              <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
+                <div className="w-full">Tips</div>
+                <span
+                  className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
+                  onClick={() => setActiveTab(null)}
+                >
+                  close
+                </span>
+              </div>
+
+              <hr className="w-[calc(100%+22px)] -mx-3 border-[rgba(255,255,255,0.05)]" />
+            </>
           )}
         </div>
       )}
@@ -1745,61 +1912,65 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
       {/* ideas container with dynamic class based on viewLayout */}
       <div className={`w-full flex ${viewLayout === 'horizontal' ? 'flex-row gap-3' : 'flex-col'} p-3 pt-0 overflow-auto`}>
 
-        {/* Untagged column - always display */}
-        <div className="relative min-w-[400px] flex flex-1 flex-col">
-          <div className="min-h-14 flex justify-center items-center p-4">
-            <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
-              <span className="material-symbols-rounded text-base">tag</span>
-              untagged
-            </div>
-          </div>
-          <div
-            ref={columnRefs.current.untagged}
-            contentEditable
-            spellCheck="false"
-            className="h-full p-4 focus:outline-none text-center leading-tight font-normal rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-            onInput={() => handleChange('untagged', 'untagged')}
-            onKeyDown={(e) => handleKeyDown(e, 'untagged', 'untagged')}
-            onKeyPress={(e) => handleKeyPress(e, 'untagged', 'untagged')}
-            onPaste={(e) => handlePaste(e, 'untagged', 'untagged')}
-            onFocus={() => handleFocus('untagged', 'untagged')}
-            onBlur={() => handleBlur('untagged', 'untagged')}
-          >
-            {/* Content will be set via initializeColumnContent */}
-          </div>
-        </div>
-
-        {/* Tag-based columns - display for all tags */}
-        {tags.map(tag => (
-          <div key={tag.id} className="relative group min-w-[400px] flex flex-1 flex-col">
-            <div className="relative min-h-14 flex justify-center items-center py-4 px-6">
-              <div className="flex items-center pb-1 pl-2 pr-3 select-none">
+        {/* Untagged column - always display if selected */}
+        {selectedTags['untagged'] && (
+          <div className="relative min-w-[400px] flex flex-1 flex-col">
+            <div className="min-h-14 flex justify-center items-center p-4">
+              <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
                 <span className="material-symbols-rounded text-base">tag</span>
-                <span className="truncate">{tag.name}</span>
-                <span
-                  className="absolute top-1/2 -translate-y-1/2 right-2 material-symbols-rounded text-base cursor-pointer text-white/40 ml-1 invisible group-hover:visible hover:scale-125 transition-[transform] duration-100 ease-in-out hover:text-white"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteTag(tag.id, tag.name);
-                  }}
-                >more_horiz</span>
+                untagged
               </div>
             </div>
             <div
-              ref={columnRefs.current[tag.id]}
+              ref={columnRefs.current.untagged}
               contentEditable
               spellCheck="false"
-              className="h-full p-4 focus:outline-none text-center leading-tight font-normal rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-              onInput={() => handleChange('tag', tag.id)}
-              onKeyDown={(e) => handleKeyDown(e, 'tag', tag.id)}
-              onKeyPress={(e) => handleKeyPress(e, 'tag', tag.id)}
-              onPaste={(e) => handlePaste(e, 'tag', tag.id)}
-              onFocus={() => handleFocus('tag', tag.id)}
-              onBlur={() => handleBlur('tag', tag.id)}
+              className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+              onInput={() => handleChange('untagged', 'untagged')}
+              onKeyDown={(e) => handleKeyDown(e, 'untagged', 'untagged')}
+              onKeyPress={(e) => handleKeyPress(e, 'untagged', 'untagged')}
+              onPaste={(e) => handlePaste(e, 'untagged', 'untagged')}
+              onFocus={() => handleFocus('untagged', 'untagged')}
+              onBlur={() => handleBlur('untagged', 'untagged')}
             >
               {/* Content will be set via initializeColumnContent */}
             </div>
           </div>
+        )}
+
+        {/* Tag-based columns - display for all selected tags */}
+        {tags.map(tag => (
+          selectedTags[tag.id] && (
+            <div key={tag.id} className="relative group min-w-[400px] flex flex-1 flex-col">
+              <div className="relative min-h-14 flex justify-center items-center py-4 px-6">
+                <div className="flex items-center pb-1 pl-2 pr-3 select-none">
+                  <span className="material-symbols-rounded text-base">tag</span>
+                  <span className="truncate">{tag.name}</span>
+                  <span
+                    className="absolute top-1/2 -translate-y-1/2 right-2 material-symbols-rounded text-base cursor-pointer text-white/40 ml-1 invisible group-hover:visible hover:scale-125 transition-[transform] duration-100 ease-in-out hover:text-white"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteTag(tag.id, tag.name);
+                    }}
+                  >more_horiz</span>
+                </div>
+              </div>
+              <div
+                ref={columnRefs.current[tag.id]}
+                contentEditable
+                spellCheck="false"
+                className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+                onInput={() => handleChange('tag', tag.id)}
+                onKeyDown={(e) => handleKeyDown(e, 'tag', tag.id)}
+                onKeyPress={(e) => handleKeyPress(e, 'tag', tag.id)}
+                onPaste={(e) => handlePaste(e, 'tag', tag.id)}
+                onFocus={() => handleFocus('tag', tag.id)}
+                onBlur={() => handleBlur('tag', tag.id)}
+              >
+                {/* Content will be set via initializeColumnContent */}
+              </div>
+            </div>
+          )
         ))}
 
         {/* New tag column - always display at the end */}
@@ -1845,7 +2016,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
               </div>
             )}
           </div>
-          <div className="h-full p-4 focus:outline-none text-center leading-tight font-normal rounded-2xl border border-dashed border-white/[5%] whitespace-pre-wrap overflow-auto cursor-default select-none" />
+          <div className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl border border-dashed border-white/[5%] whitespace-pre-wrap overflow-auto cursor-n-resize select-none" />
         </div>
 
       </div>
@@ -1853,7 +2024,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
       {/* Context sidebar */}
       {focusedIdeaId && focusedIdea && (
         <div
-          className="idea-sidebar h-full min-w-[400px] flex flex-1 flex-col px-8 overflow-auto bg-neutral-800"
+          className="idea-sidebar h-full min-w-[400px] flex flex-1 flex-col px-8 overflow-auto shadow-[-1px_0_0_rgba(255,255,255,0.05)]"
           onMouseDown={(e) => {
             // Prevent the mousedown from triggering a selection change
             // This is critical since selection changes can cause the sidebar to close
@@ -1866,14 +2037,31 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
           }}
         >
           <div className="flex flex-1 flex-col justify-between">
+
             <div className="flex flex-1 flex-col">
 
-              <div className="min-h-14 flex flex-row justify-between items-center gap-4 py-4 sticky top-0 z-10 bg-neutral-800 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(38,38,38,1),-16px_0_0_rgba(38,38,38,1)]">
-                <div className="flex flex-1 items-center leading-tight">
-                  {focusedIdea.content}
-                </div>
+              <div className="relative min-h-14 flex flex-row justify-between items-center gap-6 py-4 sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]">
+                {isTitleEditing ? (
+                  <input
+                    ref={titleEditRef}
+                    type="text"
+                    value={titleEditValue}
+                    onChange={handleTitleEditChange}
+                    onKeyDown={handleTitleEditKeyDown}
+                    onBlur={saveTitleEdit}
+                    className="h-10 w-[calc(100%+40px)] flex items-center px-3 pb-1 -mx-3 -my-2 bg-[#282828] border-none rounded-lg outline-none"
+                    autoFocus
+                  />
+                ) : (
+                  <div
+                    className="h-10 w-[calc(100%-12px)] flex items-center px-3 pb-1 -mx-3 -my-2 rounded-lg outline-none leading-tight hover:bg-white/[2%] cursor-text"
+                    onClick={startTitleEdit}
+                  >
+                    {focusedIdea.content}
+                  </div>
+                )}
                 <span
-                  className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out"
+                  className="absolute top-1/2 -translate-y-1/2 -z-10 right-0 material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
                   onMouseDown={(e) => {
                     // Stop propagation to prevent the parent handler from blocking this click
                     e.stopPropagation();
@@ -1884,7 +2072,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                     setFocusedIdeaId(null);
                   }}
                 >
-                  dock_to_left
+                  close
                 </span>
               </div>
 

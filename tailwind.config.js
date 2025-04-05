@@ -6,14 +6,6 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        'geist': ['Geist', 'sans-serif'],
-        'pangram': ['Pangram Sans Rounded', 'sans-serif'],
-        'pangram-sans': ['Pangram Sans', 'sans-serif'],
-        'pangram-narrow': ['Pangram Sans Narrow', 'sans-serif'],
-        'object-sans': ['Object Sans', 'sans-serif'],
-        'nikkei': ['Nikkei Journal', 'serif'],
-        'nikkei-maru': ['Nikkei Maru', 'serif'],
-        'manrope': ['Manrope', 'sans-serif'],
         'pressura': ['GT Pressura Extended', 'monospace'],
         'pressura-ext': ['GT Pressura Extended', 'monospace'],
         'pressura-std': ['GT Pressura Standard', 'monospace']
