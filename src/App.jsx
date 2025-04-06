@@ -8,6 +8,22 @@ import {
   serverTimestamp
 } from "firebase/firestore";
 
+// Utility function to strip HTML tags and decode HTML entities
+const stripHtmlAndDecodeEntities = (html) => {
+  if (!html) return '';
+
+  // Create a temporary DOM element
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+
+  // Get the text content (this strips HTML tags)
+  let text = doc.body.textContent || '';
+
+  // Decode HTML entities by using the browser's built-in decoder
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = text;
+  return textarea.value;
+};
+
 const App = () => {
   const [ideas, setIdeas] = useState([]);
   const [focusedIdeaId, setFocusedIdeaId] = useState(null);
@@ -17,7 +33,7 @@ const App = () => {
   const [tagInputValue, setTagInputValue] = useState('');
   const [ideaTags, setIdeaTags] = useState([]);
   const [globalTagCounts, setGlobalTagCounts] = useState({});
-  const [activeTab, setActiveTab] = useState(null);
+  const [activeTab, setActiveTab] = useState('view');
   const [selectedTags, setSelectedTags] = useState({ 'untagged': true });
   const [selectionState, setSelectionState] = useState('all');
   const [newTagInputVisible, setNewTagInputVisible] = useState(false);
@@ -29,10 +45,15 @@ const App = () => {
   const [noteInputValue, setNoteInputValue] = useState('');
   const [ideaNotes, setIdeaNotes] = useState([]);
   // View layout state
-  const [viewLayout, setViewLayout] = useState('horizontal');
+  const [viewLayout, setViewLayout] = useState('vertical');
   // Title editing state
   const [isTitleEditing, setIsTitleEditing] = useState(false);
   const [titleEditValue, setTitleEditValue] = useState('');
+  // Group by tag state
+  const [groupByTag, setGroupByTag] = useState(true);
+  // Sort by options
+  const [sortBy, setSortBy] = useState('time'); // 'time' or 'alphabetical'
+  const [sortOrder, setSortOrder] = useState('desc'); // 'asc' or 'desc'
 
   const editorRef = useRef(null);
   const columnRefs = useRef({});
@@ -62,6 +83,9 @@ const App = () => {
   useEffect(() => {
     // Make sure untagged column always has a reference
     columnRefs.current.untagged = columnRefs.current.untagged || React.createRef();
+
+    // Make sure 'all' column has a reference for non-grouped view
+    columnRefs.current.all = columnRefs.current.all || React.createRef();
 
     // Make sure each tag has a reference
     tags.forEach(tag => {
@@ -111,6 +135,22 @@ const App = () => {
       console.error("Error setting up ideas snapshot listener:", error);
     }
   }, [isInitialLoad]);
+
+  // Set default focused idea when ideas are first loaded
+  useEffect(() => {
+    // Only set a default focused idea if we have ideas and none is currently focused
+    if (ideas.length > 0 && !focusedIdeaId) {
+      // Sort ideas by creation time - newest first
+      const sortedIdeas = [...ideas].sort((a, b) => {
+        const dateA = a.createdAt.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
+        const dateB = b.createdAt.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
+        return dateB - dateA; // Newest first
+      });
+
+      // Focus the newest idea
+      setFocusedIdeaId(sortedIdeas[0]?.id);
+    }
+  }, [ideas, focusedIdeaId]);
 
   // Load all tags from Firebase
   useEffect(() => {
@@ -240,14 +280,20 @@ const App = () => {
   useEffect(() => {
     if (ideas.length === 0 || isInitialLoad) return;
 
-    // Initialize editor content for each column
-    initializeColumnContent('untagged', untaggedIdeas);
+    // If not grouping by tag and in vertical view, show all ideas in one column
+    if (viewLayout === 'vertical' && !groupByTag) {
+      // Initialize the 'all' column with all ideas
+      initializeColumnContent('all', ideas);
+    } else {
+      // Initialize editor content for each column
+      initializeColumnContent('untagged', untaggedIdeas);
 
-    tags.forEach(tag => {
-      const taggedIdeas = getIdeasByTag(tag.id);
-      initializeColumnContent(tag.id, taggedIdeas);
-    });
-  }, [ideas, tags, untaggedIdeas, tagIdeasMap, isInitialLoad, tags]);
+      tags.forEach(tag => {
+        const taggedIdeas = getIdeasByTag(tag.id);
+        initializeColumnContent(tag.id, taggedIdeas);
+      });
+    }
+  }, [ideas, tags, untaggedIdeas, tagIdeasMap, isInitialLoad, groupByTag, viewLayout, sortBy, sortOrder]);
 
   // Initialize editor styles
   useEffect(() => {
@@ -394,9 +440,12 @@ const App = () => {
         ? relevantIdeas[insertAfterIndex].order + 0.5
         : ideas.length > 0 ? Math.max(...ideas.map(i => i.order)) + 1 : 0;
 
+      // Clean the content before storing
+      const cleanContent = stripHtmlAndDecodeEntities(content || '');
+
       // Create new idea in Firebase
       const newIdeaRef = await addDoc(ideasRef, {
-        content: content || '',
+        content: cleanContent,
         order: newOrder,
         createdAt: new Date(),
         updatedAt: new Date()
@@ -405,7 +454,7 @@ const App = () => {
       // Create the new idea object
       const newIdea = {
         id: newIdeaRef.id,
-        content: content || '',
+        content: cleanContent,
         order: newOrder,
         createdAt: new Date(),
         updatedAt: new Date()
@@ -419,6 +468,38 @@ const App = () => {
       // If this idea is being created in a tag column, tag it immediately
       if (tagId) {
         await addTagToIdea(tagId, newIdeaRef.id);
+      } else {
+        // If creating in "all" view or untagged column, explicitly add to untaggedIdeas
+        setUntaggedIdeas(prevUntagged => {
+          // Check if already in untagged ideas (avoid duplicates)
+          if (prevUntagged.some(idea => idea.id === newIdeaRef.id)) {
+            return prevUntagged;
+          }
+          return [...prevUntagged, newIdea];
+        });
+        
+        // If in horizontal view or groupByTag mode, make sure it appears in untagged column
+        if (viewLayout === 'horizontal' || groupByTag) {
+          const untaggedRef = columnRefs.current.untagged;
+          if (untaggedRef && untaggedRef.current) {
+            const placeholder = untaggedRef.current.querySelector('[data-idea-id="placeholder"]');
+            if (placeholder) {
+              // Replace placeholder with the idea
+              const ideaDiv = document.createElement('div');
+              ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+              ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
+              ideaDiv.innerHTML = cleanContent || '';
+              placeholder.parentNode.replaceChild(ideaDiv, placeholder);
+            } else if (!untaggedRef.current.querySelector(`[data-idea-id="${newIdeaRef.id}"]`)) {
+              // Add to the column if not already there
+              const ideaDiv = document.createElement('div');
+              ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+              ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
+              ideaDiv.innerHTML = cleanContent || '';
+              untaggedRef.current.appendChild(ideaDiv);
+            }
+          }
+        }
       }
 
       return newIdeaRef.id;
@@ -490,14 +571,14 @@ const App = () => {
             const ideaDiv = document.createElement('div');
             ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
             ideaDiv.setAttribute('data-idea-id', ideaId);
-            ideaDiv.innerHTML = idea.content || '';
+            ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
             placeholder.parentNode.replaceChild(ideaDiv, placeholder);
           } else {
             // Append the idea to the column
             const ideaDiv = document.createElement('div');
             ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
             ideaDiv.setAttribute('data-idea-id', ideaId);
-            ideaDiv.innerHTML = idea.content || '';
+            ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
             columnRef.current.appendChild(ideaDiv);
           }
         }
@@ -569,7 +650,7 @@ const App = () => {
             const ideaDiv = document.createElement('div');
             ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
             ideaDiv.setAttribute('data-idea-id', ideaId);
-            ideaDiv.innerHTML = idea.content || '';
+            ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
             placeholder.parentNode.replaceChild(ideaDiv, placeholder);
           } else {
             // Append the idea to the untagged column if it doesn't already exist
@@ -577,7 +658,7 @@ const App = () => {
               const ideaDiv = document.createElement('div');
               ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
               ideaDiv.setAttribute('data-idea-id', ideaId);
-              ideaDiv.innerHTML = idea.content || '';
+              ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
               untaggedRef.current.appendChild(ideaDiv);
             }
           }
@@ -624,11 +705,11 @@ const App = () => {
 
   // Handle input changes for any column
   const handleChange = async (columnType, columnId) => {
-    const columnRef = columnType === 'untagged'
-      ? columnRefs.current.untagged
-      : columnRefs.current[columnId];
-
+    const columnRef = columnRefs.current[columnId];
     if (!columnRef || !columnRef.current) return;
+
+    // Skip if already updating to avoid recursive loops
+    if (isUpdatingRef.current) return;
 
     // Get the current selection
     const selection = window.getSelection();
@@ -667,15 +748,52 @@ const App = () => {
 
       updateTimeoutRef.current = setTimeout(async () => {
         try {
+          // Set updating flag
+          isUpdatingRef.current = true;
+
+          const newContent = stripHtmlAndDecodeEntities(currentDiv.innerHTML);
+
           await updateDoc(doc(db, 'ideas', ideaId), {
-            content: currentDiv.innerHTML,
+            content: newContent,
             updatedAt: new Date()
           });
 
+          // If this is in the 'all' column, update it in all other columns too
+          if (columnType === 'all') {
+            updateIdeaInAllColumns(ideaId, newContent);
+            
+            // Also update the local ideas state
+            setIdeas(prevIdeas => 
+              prevIdeas.map(idea => 
+                idea.id === ideaId 
+                  ? { ...idea, content: newContent, updatedAt: new Date() } 
+                  : idea
+              )
+            );
+            
+            // Check if this idea is untagged and update untaggedIdeas if needed
+            const isUntagged = !Object.values(tagIdeasMap).flat().includes(ideaId);
+            if (isUntagged) {
+              setUntaggedIdeas(prevUntagged => 
+                prevUntagged.map(idea => 
+                  idea.id === ideaId 
+                    ? { ...idea, content: newContent, updatedAt: new Date() } 
+                    : idea
+                )
+              );
+            }
+          }
+
           // Place cursor at the end again after update
           setCursorAtEnd(currentDiv);
+
+          // Reset updating flag after a delay
+          setTimeout(() => {
+            isUpdatingRef.current = false;
+          }, 500);
         } catch (error) {
           console.error("Error updating idea:", error);
+          isUpdatingRef.current = false;
         }
       }, 1000);
     } else if (ideaId.startsWith('temp-') && currentDiv.textContent.trim() !== '') {
@@ -686,16 +804,60 @@ const App = () => {
 
       updateTimeoutRef.current = setTimeout(async () => {
         try {
-          const newIdeaId = await createNewIdea(currentDiv.innerHTML, columnType === 'untagged' ? null : columnId);
+          // Set updating flag
+          isUpdatingRef.current = true;
+
+          // If we're in the 'all' column, create idea without a tag
+          const tagId = columnType === 'all' ? null :
+            (columnType === 'untagged' ? null : columnId);
+
+          const newIdeaId = await createNewIdea(currentDiv.innerHTML, tagId);
           if (newIdeaId) {
             // Just update the ID attribute, don't change anything else
             currentDiv.setAttribute('data-idea-id', newIdeaId);
 
+            // If in 'all' view, also make sure this idea appears in untagged column if necessary
+            if (columnType === 'all' && (viewLayout === 'horizontal' || groupByTag)) {
+              // Get the created idea content
+              const newContent = stripHtmlAndDecodeEntities(currentDiv.innerHTML);
+              
+              // Make sure it appears in the untagged column
+              const untaggedRef = columnRefs.current.untagged;
+              if (untaggedRef && untaggedRef.current) {
+                const existingIdea = untaggedRef.current.querySelector(`[data-idea-id="${newIdeaId}"]`);
+                if (!existingIdea) {
+                  // Check if there's a placeholder to replace
+                  const placeholder = untaggedRef.current.querySelector('[data-idea-id="placeholder"]');
+                  if (placeholder) {
+                    // Replace placeholder with the idea
+                    const ideaDiv = document.createElement('div');
+                    ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+                    ideaDiv.setAttribute('data-idea-id', newIdeaId);
+                    ideaDiv.innerHTML = newContent || '';
+                    placeholder.parentNode.replaceChild(ideaDiv, placeholder);
+                  } else {
+                    // Add the idea to the untagged column
+                    const ideaDiv = document.createElement('div');
+                    ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+                    ideaDiv.setAttribute('data-idea-id', newIdeaId);
+                    ideaDiv.innerHTML = newContent || '';
+                    untaggedRef.current.appendChild(ideaDiv);
+                  }
+                }
+              }
+            }
+
             // Place cursor at the end again after update
             setCursorAtEnd(currentDiv);
           }
+
+          // Reset updating flag after a delay
+          setTimeout(() => {
+            isUpdatingRef.current = false;
+          }, 500);
         } catch (error) {
           console.error("Error creating permanent idea:", error);
+          isUpdatingRef.current = false;
         }
       }, 1000);
     }
@@ -890,7 +1052,7 @@ const App = () => {
         // Update the current idea with just the text before the cursor
         if (currentIdeaId && !currentIdeaId.startsWith('temp-')) {
           await updateDoc(doc(db, 'ideas', currentIdeaId), {
-            content: beforeText,
+            content: stripHtmlAndDecodeEntities(beforeText),
             updatedAt: new Date()
           });
 
@@ -1300,7 +1462,7 @@ const App = () => {
                 const ideaDiv = document.createElement('div');
                 ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
                 ideaDiv.setAttribute('data-idea-id', ideaId);
-                ideaDiv.innerHTML = idea.content || '';
+                ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
                 placeholder.parentNode.replaceChild(ideaDiv, placeholder);
               } else {
                 // Append the idea to the untagged column if it doesn't already exist
@@ -1308,7 +1470,7 @@ const App = () => {
                   const ideaDiv = document.createElement('div');
                   ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
                   ideaDiv.setAttribute('data-idea-id', ideaId);
-                  ideaDiv.innerHTML = idea.content || '';
+                  ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
                   untaggedRef.current.appendChild(ideaDiv);
                 }
               }
@@ -1329,33 +1491,37 @@ const App = () => {
 
   // Initialize column content with ideas
   const initializeColumnContent = (columnId, columnIdeas) => {
-    const columnRef = columnId === 'untagged'
-      ? columnRefs.current.untagged
-      : columnRefs.current[columnId];
-
+    const columnRef = columnRefs.current[columnId];
     if (!columnRef || !columnRef.current) return;
 
-    // Save the current selection and focused element
-    const selection = window.getSelection();
-    const savedRange = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
-    const activeElement = document.activeElement;
-
-    // Keep track of the currently focused idea ID, if any
-    let focusedDivId = null;
-    if (activeElement && activeElement.classList && activeElement.classList.contains('idea-item')) {
-      focusedDivId = activeElement.getAttribute('data-idea-id');
-    }
-
-    // Create elements directly instead of using innerHTML
+    // Clear the current content
     columnRef.current.innerHTML = '';
 
+    // Remember the focused div id so we can restore focus later
+    const focusedDivId = focusedIdeaId;
+
+    // Get the focusedIdea if we have one
+    const focusedIdea = focusedIdeaId ? ideas.find(idea => idea.id === focusedIdeaId) : null;
+
     if (columnIdeas.length > 0) {
-      // Sort ideas by creation time - newest first
-      const sortedIdeas = [...columnIdeas].sort((a, b) => {
-        const dateA = a.createdAt.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
-        const dateB = b.createdAt.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
-        return dateB - dateA; // Newest first
-      });
+      // Sort ideas based on the current sort options
+      let sortedIdeas = [...columnIdeas];
+
+      if (sortBy === 'time') {
+        sortedIdeas = sortedIdeas.sort((a, b) => {
+          const dateA = a.createdAt.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
+          const dateB = b.createdAt.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
+          return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+        });
+      } else if (sortBy === 'alphabetical') {
+        sortedIdeas = sortedIdeas.sort((a, b) => {
+          const contentA = stripHtmlAndDecodeEntities(a.content || '').toLowerCase();
+          const contentB = stripHtmlAndDecodeEntities(b.content || '').toLowerCase();
+          return sortOrder === 'asc'
+            ? contentA.localeCompare(contentB)
+            : contentB.localeCompare(contentA);
+        });
+      }
 
       // Add each idea as a DOM element
       sortedIdeas.forEach(idea => {
@@ -1371,7 +1537,7 @@ const App = () => {
         }
 
         ideaDiv.setAttribute('data-idea-id', idea.id);
-        ideaDiv.innerHTML = idea.content || '';
+        ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
         columnRef.current.appendChild(ideaDiv);
       });
     } else {
@@ -1384,34 +1550,14 @@ const App = () => {
       columnRef.current.appendChild(placeholderDiv);
     }
 
-    // Try to restore focus and selection if we had one
-    if (focusedDivId && savedRange) {
-      // Find the div with the previously focused idea ID
-      const newFocusedDiv = columnRef.current.querySelector(`[data-idea-id="${focusedDivId}"]`);
-      if (newFocusedDiv) {
-        try {
-          // Focus the div and try to restore a similar selection
-          newFocusedDiv.focus();
-
-          // Create a new range positioned similarly to the old one
-          const newRange = document.createRange();
-          const nodeToSelect = newFocusedDiv.firstChild || newFocusedDiv;
-
-          // Try to position cursor similarly to before
-          if (nodeToSelect.nodeType === Node.TEXT_NODE) {
-            const offset = Math.min(savedRange.startOffset, nodeToSelect.textContent.length);
-            newRange.setStart(nodeToSelect, offset);
-            newRange.setEnd(nodeToSelect, offset);
-          } else {
-            newRange.selectNodeContents(nodeToSelect);
-            newRange.collapse(true);
-          }
-
-          selection.removeAllRanges();
-          selection.addRange(newRange);
-        } catch (e) {
-          console.log("Couldn't restore selection after initializing column content");
-        }
+    // If this column has the focused item, try to focus it
+    if (focusedDivId) {
+      const focusedElem = columnRef.current.querySelector(`[data-idea-id="${focusedDivId}"]`);
+      if (focusedElem) {
+        setTimeout(() => {
+          focusedElem.focus();
+          setCursorAtEnd(focusedElem);
+        }, 10);
       }
     }
   };
@@ -1663,6 +1809,24 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
     setViewLayout(layout);
   };
 
+  // Handle group by tag toggle
+  const handleGroupByTagToggle = () => {
+    // Only allow toggling when in vertical view
+    if (viewLayout === 'vertical') {
+      setGroupByTag(!groupByTag);
+    }
+  };
+
+  // Handle sort by change
+  const handleSortByChange = (sortType) => {
+    setSortBy(sortType);
+  };
+
+  // Handle sort order toggle
+  const handleSortOrderToggle = () => {
+    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+  };
+
   // Handle title edit change
   const handleTitleEditChange = (e) => {
     setTitleEditValue(e.target.value);
@@ -1684,7 +1848,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
     if (!focusedIdea) return;
 
     // Set current content as initial value
-    setTitleEditValue(focusedIdea.content);
+    setTitleEditValue(stripHtmlAndDecodeEntities(focusedIdea.content));
     setIsTitleEditing(true);
 
     // Focus the input after a brief delay
@@ -1701,21 +1865,24 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
     if (!focusedIdeaId || !titleEditValue.trim()) return;
 
     try {
+      // Clean the content
+      const cleanContent = stripHtmlAndDecodeEntities(titleEditValue.trim());
+
       // Update in Firestore
       await updateDoc(doc(db, 'ideas', focusedIdeaId), {
-        content: titleEditValue.trim(),
+        content: cleanContent,
         updatedAt: new Date()
       });
 
       // Also update locally for immediate feedback
       setIdeas(prev => prev.map(idea =>
         idea.id === focusedIdeaId
-          ? { ...idea, content: titleEditValue.trim(), updatedAt: new Date() }
+          ? { ...idea, content: cleanContent, updatedAt: new Date() }
           : idea
       ));
 
       // Update UI in all columns where this idea appears
-      updateIdeaInAllColumns(focusedIdeaId, titleEditValue.trim());
+      updateIdeaInAllColumns(focusedIdeaId, cleanContent);
 
       // Exit edit mode
       setIsTitleEditing(false);
@@ -1730,32 +1897,100 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
     setTitleEditValue('');
   };
 
-  // Update idea content in all columns where it appears
+  // Update idea content in all columns
   const updateIdeaInAllColumns = (ideaId, newContent) => {
-    // Update in untagged column if present
-    if (columnRefs.current.untagged && columnRefs.current.untagged.current) {
-      const ideaDiv = columnRefs.current.untagged.current.querySelector(`[data-idea-id="${ideaId}"]`);
-      if (ideaDiv) {
-        ideaDiv.innerHTML = newContent;
-      }
-    }
+    // Clean content once to avoid repeated parsing
+    const cleanContent = stripHtmlAndDecodeEntities(newContent);
 
-    // Update in all tag columns
-    tags.forEach(tag => {
-      if (columnRefs.current[tag.id] && columnRefs.current[tag.id].current) {
-        const ideaDiv = columnRefs.current[tag.id].current.querySelector(`[data-idea-id="${ideaId}"]`);
+    // Update in all columns where this idea appears
+    Object.keys(columnRefs.current).forEach(columnId => {
+      const columnRef = columnRefs.current[columnId];
+      if (columnRef && columnRef.current) {
+        const ideaDiv = columnRef.current.querySelector(`[data-idea-id="${ideaId}"]`);
         if (ideaDiv) {
-          ideaDiv.innerHTML = newContent;
+          ideaDiv.innerHTML = cleanContent;
         }
       }
     });
   };
 
+  // Re-initialize columns when sort settings change
+  useEffect(() => {
+    if (ideas.length === 0 || isInitialLoad || isUpdatingRef.current) return;
+
+    // Re-initialize all columns based on current grouping and sort settings
+    if (viewLayout === 'vertical' && !groupByTag) {
+      initializeColumnContent('all', ideas);
+    } else {
+      initializeColumnContent('untagged', untaggedIdeas);
+
+      getTagsWithIdeas().forEach(tag => {
+        if (selectedTags[tag.id]) {
+          const taggedIdeas = getIdeasByTag(tag.id);
+          initializeColumnContent(tag.id, taggedIdeas);
+        }
+      });
+    }
+  }, [sortBy, sortOrder]);
+
+  // New useEffect to handle view layout changes
+  useEffect(() => {
+    // Skip if no ideas or still initializing
+    if (ideas.length === 0 || isInitialLoad) return;
+    
+    // When switching from vertical layout with groupByTag off to any other view
+    if (viewLayout === 'horizontal' || groupByTag) {
+      // Make sure untagged ideas includes all ideas not explicitly tagged
+      const taggedIdeaIds = new Set();
+      
+      // Collect all idea IDs that have explicit tags
+      Object.keys(tagIdeasMap).forEach(tagId => {
+        (tagIdeasMap[tagId] || []).forEach(ideaId => {
+          taggedIdeaIds.add(ideaId);
+        });
+      });
+      
+      // Find ideas with no tags and update untaggedIdeas
+      const untagged = ideas.filter(idea => !taggedIdeaIds.has(idea.id));
+      setUntaggedIdeas(untagged);
+      
+      // Only initialize untagged column if we're in horizontal view or groupByTag is on
+      initializeColumnContent('untagged', untagged);
+    }
+  }, [viewLayout, groupByTag, ideas, tagIdeasMap, isInitialLoad]);
+
+  // Update global tag counts whenever untaggedIdeas or ideas change
+  useEffect(() => {
+    // Skip if no ideas or still initializing
+    if (ideas.length === 0 || isInitialLoad) return;
+    
+    // Calculate the total number of ideas in tags
+    let taggedCount = 0;
+    const seenIdeaIds = new Set();
+    
+    // Count each idea only once, even if it has multiple tags
+    Object.keys(tagIdeasMap).forEach(tagId => {
+      (tagIdeasMap[tagId] || []).forEach(ideaId => {
+        if (!seenIdeaIds.has(ideaId)) {
+          seenIdeaIds.add(ideaId);
+          taggedCount++;
+        }
+      });
+    });
+    
+    // Add untagged ideas count
+    const totalCount = taggedCount + untaggedIdeas.length;
+    
+    // Update the global tag counts with the total
+    setGlobalTagCounts(prev => ({
+      ...prev,
+      total: totalCount
+    }));
+  }, [untaggedIdeas, ideas, tagIdeasMap, isInitialLoad]);
+
   return (
     <div className="h-screen flex flex-row text-white/80 text-sm bg-neutral-900 selection:bg-rose-500 selection:text-white selection:text-white caret-rose-500 font-pressura font-light">
-
       <div className="h-full flex flex-1 flex-col px-2 shadow-[1px_0_0_rgba(255,255,255,0.05)]">
-
         {/* Utility sidebar tabs */}
         {/* tab: view */}
         <div
@@ -1778,16 +2013,14 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
         >
           <span className={`material-symbols-rounded text-base ${activeTab === 'tips' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>info</span>
         </div>
-
       </div>
 
       {/* Utility sidebar - only show when a tab is active */}
       {activeTab && (
         <div className="idea-sidebar h-full min-w-[340px] max-w-[400px] flex flex-col px-8 overflow-auto shadow-[1px_0_0_rgba(255,255,255,0.05)]">
-
           {activeTab === 'view' && (
             <>
-              <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
+              <div className="w-[calc(100%+24px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
                 <div className="w-full">View</div>
                 <span
                   className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
@@ -1799,14 +2032,45 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
               <hr className="w-full border-[rgba(255,255,255,0.05)]" />
 
-              <div className="flex flex-row items-center justify-start gap-6 -mx-3 gap-1 pt-3 px-3 text-white">
-                <div
-                  className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'horizontal' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
-                  onClick={() => handleViewLayoutToggle('horizontal')}
-                >
-                  <span className={`material-symbols-rounded text-base ${viewLayout === 'horizontal' ? 'filled' : ''}`}>view_column_2</span>
-                  Horizontal
+              {/* Sort by select menu */}
+              <div className="flex flex-row items-center -mx-3 mt-3 px-3">
+
+                <div className="flex flex-row items-center gap-1 pt-1 pb-2 mr-2 text-white">
+                  <span className="material-symbols-rounded text-base">sort</span>
+                  Sort by
                 </div>
+
+                {/* Time sort option */}
+                <div
+                  className={`flex flex-row items-center gap-1 pt-1 pb-2 px-2 px-3 rounded-lg select-none ${sortBy === 'time' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
+                  onClick={() => handleSortByChange('time')}
+                >
+                  Time
+                </div>
+
+                {/* Alphabetical sort option */}
+                <div
+                  className={`flex flex-row items-center gap-1 pt-1 pb-2 px-2 px-3 rounded-lg select-none ${sortBy === 'alphabetical' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
+                  onClick={() => handleSortByChange('alphabetical')}
+                >
+                  Alpha
+                </div>
+
+                {/* Sort order toggle */}
+                <div
+                  className="flex flex-row items-center gap-1 py-1.5 px-2 px-3 -mx-3 rounded-lg select-none text-white/40 hover:bg-white/[2%] cursor-pointer ml-auto"
+                  onClick={handleSortOrderToggle}
+                >
+                  <span className="material-symbols-rounded text-base">
+                    {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                  </span>
+                </div>
+
+              </div>
+
+              <hr className="w-full my-3 border-[rgba(255,255,255,0.05)]" />
+
+              <div className="flex flex-row items-center justify-start gap-6 -mx-3 gap-1 px-3 text-white">
                 <div
                   className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'vertical' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
                   onClick={() => handleViewLayoutToggle('vertical')}
@@ -1814,64 +2078,83 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                   <span className={`material-symbols-rounded text-base ${viewLayout === 'vertical' ? 'filled' : ''}`}>view_agenda</span>
                   Vertical
                 </div>
+                <div
+                  className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'horizontal' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
+                  onClick={() => handleViewLayoutToggle('horizontal')}
+                >
+                  <span className={`material-symbols-rounded text-base ${viewLayout === 'horizontal' ? 'filled' : ''}`}>view_column_2</span>
+                  Horizontal
+                </div>
               </div>
 
               <hr className="w-full my-3 border-[rgba(255,255,255,0.05)]" />
 
-              <div className="flex flex-row items-center justify-between gap-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
-
-                <div className="w-full flex flex-row items-center gap-1 pt-1 pb-2 select-none" onClick={toggleAllTags}>
-                  <span className={`material-symbols-rounded text-base ${selectionState === 'all' || selectionState === 'indeterminate' ? 'filled' : ''}`}>
-                    {selectionState === 'all' ? 'check_box' :
-                      selectionState === 'indeterminate' ? 'indeterminate_check_box' :
-                        'check_box_outline_blank'}
-                  </span>
-                  <span className="">Tags</span>
-                  <span className="ml-1 opacity-40">{Object.values(globalTagCounts).reduce((sum, count) => sum + count, 0)}</span>
-                </div>
-                <div className="flex flex-row items-center gap-1">
-                  <span className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white">tune</span>
-                </div>
-              </div>
-
-              {/* Untagged ideas item */}
-              <div
-                className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
-                onClick={() => toggleTagSelection('untagged')}
-              >
-                <span className={`material-symbols-rounded text-base ${selectedTags['untagged'] ? 'filled' : ''} ${!selectedTags['untagged'] ? 'opacity-10' : ''}`}>
-                  {selectedTags['untagged'] ? 'check' : 'check_box_outline_blank'}
-                </span>
-                <span className={`${!selectedTags['untagged'] ? 'opacity-40' : ''}`}>untagged</span>
-                <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
-              </div>
-
-              {/* show a list of tags */}
-              {(tags.length > 0 ? tags : [
-                { id: 'placeholder-1', name: 'history' },
-                { id: 'placeholder-2', name: 'science fiction' },
-                { id: 'placeholder-3', name: 'art' }
-              ]).map(tag => {
-                // Get the global count for this tag
-                const tagCount = tags.length === 0 ?
-                  (tag.id === 'placeholder-1' ? 21 : tag.id === 'placeholder-2' ? 15 : 9) :
-                  globalTagCounts[tag.id] || 0;
-
-                return (
-                  <div
-                    key={tag.id}
-                    className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
-                    onClick={() => toggleTagSelection(tag.id)}
-                  >
-                    <span className={`material-symbols-rounded text-base ${selectedTags[tag.id] ? 'filled' : ''} ${!selectedTags[tag.id] ? 'opacity-10' : ''}`}>
-                      {selectedTags[tag.id] ? 'check' : 'check_box_outline_blank'}
-                    </span>
-                    <span className={`${!selectedTags[tag.id] ? 'opacity-40' : ''}`}>{tag.name}</span>
-                    <span className="ml-1 opacity-40">{tagCount}</span>
+              {/* Only show Group by Tag toggle in vertical layout */}
+              {viewLayout === 'vertical' && (
+                <>
+                  <div className="flex flex-row items-center justify-start gap-6 -mx-3 gap-1 px-3 text-white">
+                    {/* Group by Tag toggle - only enabled in vertical view */}
+                    <div
+                      className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none hover:bg-white/[2%] cursor-pointer rounded-lg`}
+                      onClick={handleGroupByTagToggle}
+                    >
+                      <span className={`material-symbols-rounded text-base ${groupByTag ? 'filled text-white' : 'text-white/40'}`}>
+                        {groupByTag ? 'toggle_on' : 'toggle_off'}
+                      </span>
+                      <span className={`${groupByTag ? 'text-white' : 'text-white/40'}`}>Group by Tag</span>
+                    </div>
                   </div>
-                );
-              })}
+                  
+                  <hr className="w-full my-3 border-[rgba(255,255,255,0.05)]" />
+                </>
+              )}
 
+              {/* Only show Tags list when groupByTag is true or in horizontal layout */}
+              {(groupByTag || viewLayout === 'horizontal') && (
+                <>
+                  <div className="flex flex-row items-center justify-between gap-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                    <div className="w-full flex flex-row items-center gap-1 pt-1 pb-2 select-none" onClick={toggleAllTags}>
+                      <span className={`material-symbols-rounded text-base ${selectionState === 'all' || selectionState === 'indeterminate' ? 'filled' : ''}`}>
+                        {selectionState === 'all' ? 'check_box' :
+                          selectionState === 'indeterminate' ? 'indeterminate_check_box' :
+                            'check_box_outline_blank'}
+                      </span>
+                      <span className="">Tags</span>
+                      <span className="ml-1 opacity-40">{globalTagCounts.total || ideas.length}</span>
+                    </div>
+                    <div className="flex flex-row items-center gap-1">
+                      <span className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white">tune</span>
+                    </div>
+                  </div>
+
+                  {/* Untagged ideas item */}
+                  <div
+                    className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
+                    onClick={() => toggleTagSelection('untagged')}
+                  >
+                    <span className={`material-symbols-rounded text-base ${selectedTags['untagged'] ? 'filled' : ''} ${!selectedTags['untagged'] ? 'opacity-10' : ''}`}>
+                      {selectedTags['untagged'] ? 'check' : 'check_box_outline_blank'}
+                    </span>
+                    <span className={`${!selectedTags['untagged'] ? 'opacity-40' : ''}`}>untagged</span>
+                    <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
+                  </div>
+
+                  {/* show a list of tags */}
+                  {tags.map(tag => (
+                    <div
+                      key={tag.id}
+                      className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
+                      onClick={() => toggleTagSelection(tag.id)}
+                    >
+                      <span className={`material-symbols-rounded text-base ${selectedTags[tag.id] ? 'filled' : ''} ${!selectedTags[tag.id] ? 'opacity-10' : ''}`}>
+                        {selectedTags[tag.id] ? 'check' : 'check_box_outline_blank'}
+                      </span>
+                      <span className={`${!selectedTags[tag.id] ? 'opacity-40' : ''}`}>{tag.name}</span>
+                      <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
+                    </div>
+                  ))}
+                </>
+              )}
             </>
           )}
 
@@ -1910,115 +2193,137 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
       )}
 
       {/* ideas container with dynamic class based on viewLayout */}
-      <div className={`w-full flex ${viewLayout === 'horizontal' ? 'flex-row gap-3' : 'flex-col'} p-3 pt-0 overflow-auto`}>
-
-        {/* Untagged column - always display if selected */}
-        {selectedTags['untagged'] && (
-          <div className="relative min-w-[400px] flex flex-1 flex-col">
-            <div className="min-h-14 flex justify-center items-center p-4">
+      <div className={`w-full flex ${viewLayout === 'horizontal' ? 'flex-row gap-3' : 'flex-col'} p-3 pt-0 ${viewLayout === 'vertical' && !groupByTag ? 'h-full' : 'overflow-auto'}`}>
+        {/* When in vertical view, if groupByTag is false, show all ideas in a single column */}
+        {viewLayout === 'vertical' && !groupByTag ? (
+          <div className="relative min-w-[400px] flex flex-1 flex-col h-full">
+            <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
               <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
-                <span className="material-symbols-rounded text-base">tag</span>
-                untagged
+                {/* <span className="material-symbols-rounded text-base">notes</span> */}
+                All ideas <span className="ml-1 opacity-40">{ideas.length}</span>
               </div>
             </div>
             <div
-              ref={columnRefs.current.untagged}
+              ref={columnRefs.current.all}
               contentEditable
               spellCheck="false"
-              className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-              onInput={() => handleChange('untagged', 'untagged')}
-              onKeyDown={(e) => handleKeyDown(e, 'untagged', 'untagged')}
-              onKeyPress={(e) => handleKeyPress(e, 'untagged', 'untagged')}
-              onPaste={(e) => handlePaste(e, 'untagged', 'untagged')}
-              onFocus={() => handleFocus('untagged', 'untagged')}
-              onBlur={() => handleBlur('untagged', 'untagged')}
+              className="flex-1 p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+              onInput={() => handleChange('all', 'all')}
+              onKeyDown={(e) => handleKeyDown(e, 'all', 'all')}
+              onKeyPress={(e) => handleKeyPress(e, 'all', 'all')}
+              onPaste={(e) => handlePaste(e, 'all', 'all')}
+              onFocus={() => handleFocus('all', 'all')}
+              onBlur={() => handleBlur('all', 'all')}
             >
               {/* Content will be set via initializeColumnContent */}
             </div>
           </div>
-        )}
-
-        {/* Tag-based columns - display for all selected tags */}
-        {tags.map(tag => (
-          selectedTags[tag.id] && (
-            <div key={tag.id} className="relative group min-w-[400px] flex flex-1 flex-col">
-              <div className="relative min-h-14 flex justify-center items-center py-4 px-6">
-                <div className="flex items-center pb-1 pl-2 pr-3 select-none">
-                  <span className="material-symbols-rounded text-base">tag</span>
-                  <span className="truncate">{tag.name}</span>
-                  <span
-                    className="absolute top-1/2 -translate-y-1/2 right-2 material-symbols-rounded text-base cursor-pointer text-white/40 ml-1 invisible group-hover:visible hover:scale-125 transition-[transform] duration-100 ease-in-out hover:text-white"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteTag(tag.id, tag.name);
-                    }}
-                  >more_horiz</span>
+        ) : (
+          <>
+            {/* Untagged column - always display if selected */}
+            {selectedTags['untagged'] && (
+              <div className="relative min-w-[400px] flex flex-1 flex-col">
+                <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
+                  <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
+                    <span className="material-symbols-rounded text-base">tag</span>
+                    untagged <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
+                  </div>
+                </div>
+                <div
+                  ref={columnRefs.current.untagged}
+                  contentEditable
+                  spellCheck="false"
+                  className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+                  onInput={() => handleChange('untagged', 'untagged')}
+                  onKeyDown={(e) => handleKeyDown(e, 'untagged', 'untagged')}
+                  onKeyPress={(e) => handleKeyPress(e, 'untagged', 'untagged')}
+                  onPaste={(e) => handlePaste(e, 'untagged', 'untagged')}
+                  onFocus={() => handleFocus('untagged', 'untagged')}
+                  onBlur={() => handleBlur('untagged', 'untagged')}
+                >
+                  {/* Content will be set via initializeColumnContent */}
                 </div>
               </div>
-              <div
-                ref={columnRefs.current[tag.id]}
-                contentEditable
-                spellCheck="false"
-                className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-                onInput={() => handleChange('tag', tag.id)}
-                onKeyDown={(e) => handleKeyDown(e, 'tag', tag.id)}
-                onKeyPress={(e) => handleKeyPress(e, 'tag', tag.id)}
-                onPaste={(e) => handlePaste(e, 'tag', tag.id)}
-                onFocus={() => handleFocus('tag', tag.id)}
-                onBlur={() => handleBlur('tag', tag.id)}
-              >
-                {/* Content will be set via initializeColumnContent */}
-              </div>
-            </div>
-          )
-        ))}
-
-        {/* New tag column - always display at the end */}
-        <div className="relative group min-w-[400px] flex flex-1 flex-col">
-          <div className="min-h-14 max-h-14 flex justify-center items-center px-4">
-            {!newTagInputVisible ? (
-              <div
-                className="flex items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 group-hover:bg-white/5 group-hover:text-white rounded-full whitespace-nowrap select-none cursor-pointer"
-                onClick={() => {
-                  setNewTagInputVisible(true);
-                  setTimeout(() => {
-                    if (newTagInputRef.current) {
-                      newTagInputRef.current.focus();
-                    }
-                  }, 0);
-                }}
-              >
-                <span className="material-symbols-rounded text-base">add</span>
-                New tag
-              </div>
-            ) : (
-              <div
-                className="relative w-full h-10 flex items-center justify-between gap-2 px-3 bg-white/[5%] rounded-lg"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <input
-                  ref={newTagInputRef}
-                  type="text"
-                  value={newTagInputValue}
-                  onChange={handleNewTagInputChange}
-                  onKeyDown={handleNewTagInputKeyDown}
-                  className="w-full px-6 bg-transparent border-none outline-none placeholder:text-white/40 text-center"
-                  placeholder="Enter tag name"
-                  autoFocus
-                />
-                <span
-                  className="absolute top-1/2 -translate-y-1/2 right-3 material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white"
-                  onClick={(e) => {
-                    setNewTagInputVisible(false);
-                    setNewTagInputValue('');
-                  }}
-                >cancel</span>
-              </div>
             )}
-          </div>
-          <div className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl border border-dashed border-white/[5%] whitespace-pre-wrap overflow-auto cursor-n-resize select-none" />
-        </div>
 
+            {/* Tagged columns - display one per selected tag */}
+            {getTagsWithIdeas().map(tag => {
+              if (selectedTags[tag.id]) {
+                return (
+                  <div key={tag.id} className="relative min-w-[400px] flex flex-1 flex-col">
+                    <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
+                      <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
+                        <span className="material-symbols-rounded text-base">tag</span>
+                        {tag.name} <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
+                      </div>
+                    </div>
+                    <div
+                      ref={columnRefs.current[tag.id]}
+                      contentEditable
+                      spellCheck="false"
+                      className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+                      onInput={() => handleChange('tag', tag.id)}
+                      onKeyDown={(e) => handleKeyDown(e, 'tag', tag.id)}
+                      onKeyPress={(e) => handleKeyPress(e, 'tag', tag.id)}
+                      onPaste={(e) => handlePaste(e, 'tag', tag.id)}
+                      onFocus={() => handleFocus('tag', tag.id)}
+                      onBlur={() => handleBlur('tag', tag.id)}
+                    >
+                      {/* Content will be set via initializeColumnContent */}
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })}
+
+            {/* New tag column */}
+            <div className="relative group min-w-[400px] flex flex-1 flex-col">
+              <div className="min-h-14 max-h-14 flex justify-center items-center px-4">
+                {!newTagInputVisible ? (
+                  <div
+                    className="flex items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 group-hover:bg-white/5 group-hover:text-white rounded-full whitespace-nowrap select-none cursor-pointer"
+                    onClick={() => {
+                      setNewTagInputVisible(true);
+                      setTimeout(() => {
+                        if (newTagInputRef && newTagInputRef.current) {
+                          newTagInputRef.current.focus();
+                        }
+                      }, 0);
+                    }}
+                  >
+                    <span className="material-symbols-rounded text-base">add</span>
+                    New tag
+                  </div>
+                ) : (
+                  <div
+                    className="relative w-full h-10 flex items-center justify-between gap-2 px-3 bg-white/[5%] rounded-lg"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      ref={newTagInputRef}
+                      type="text"
+                      value={newTagInputValue}
+                      onChange={handleNewTagInputChange}
+                      onKeyDown={handleNewTagInputKeyDown}
+                      className="w-full px-6 bg-transparent border-none outline-none placeholder:text-white/40 text-center"
+                      placeholder="Enter tag name"
+                      autoFocus
+                    />
+                    <span
+                      className="absolute top-1/2 -translate-y-1/2 right-3 material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white"
+                      onClick={(e) => {
+                        setNewTagInputVisible(false);
+                        setNewTagInputValue('');
+                      }}
+                    >cancel</span>
+                  </div>
+                )}
+              </div>
+              <div className="h-full p-4 focus:outline-none text-center leading-tight font-normal rounded-2xl border border-dashed border-white/[5%] whitespace-pre-wrap overflow-auto cursor-default select-none" />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Context sidebar */}
@@ -2037,9 +2342,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
           }}
         >
           <div className="flex flex-1 flex-col justify-between">
-
             <div className="flex flex-1 flex-col">
-
               <div className="relative min-h-14 flex flex-row justify-between items-center gap-6 py-4 sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]">
                 {isTitleEditing ? (
                   <input
@@ -2057,7 +2360,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                     className="h-10 w-[calc(100%-12px)] flex items-center px-3 pb-1 -mx-3 -my-2 rounded-lg outline-none leading-tight hover:bg-white/[2%] cursor-text"
                     onClick={startTitleEdit}
                   >
-                    {focusedIdea.content}
+                    {stripHtmlAndDecodeEntities(focusedIdea.content)}
                   </div>
                 )}
                 <span
@@ -2266,13 +2569,13 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                   e.preventDefault();
                 }}
               >
-                <div className="w-[calc(100%+24px)] flex flex-col w-full -mx-3">
+                <div className="w-[calc(100%+25px)] flex flex-col w-full -mx-3">
 
                   {/* Display notes for this idea */}
                   {ideaNotes
                     .filter(note => note.ideaId === focusedIdeaId || note.isError)
                     .map(note => (
-                      <div key={note.id} className={`group w-full flex flex-col gap-1 p-3 rounded-lg ${note.isError ? 'bg-red-900/20' : 'hover:shadow-[inset_0_0_1px_rgba(255,255,255,0.25)]'}`}>
+                      <div key={note.id} className={`group w-full flex flex-col gap-4 p-3 rounded-lg ${note.isError ? 'bg-red-900/20' : 'hover:shadow-[inset_0_0_1px_rgba(255,255,255,0.25)]'}`}>
                         <div className={`whitespace-pre-wrap leading-tight break-words ${note.isIndex ? 'cursor-pointer' : ''}`}
                           onClick={note.isIndex ? () => {
                             window.open('https://console.firebase.google.com/project/_/firestore/indexes', '_blank');
@@ -2345,7 +2648,6 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                             setNoteInputValue('');
                           }}
                         >
-                          {/* <span className="material-symbols-rounded text-base">close</span> */}
                           Cancel
                         </button>
                       </div>
@@ -2353,11 +2655,9 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                   )}
                 </div>
               </div>
-
             </div>
 
             <hr className="border-[rgba(255,255,255,0.05)]" />
-
 
             {/* Meta */}
             <div className="min-h-14 flex flex-col justify-center gap-y-2 pt-4 pb-8">
@@ -2388,9 +2688,8 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
           </div>
         </div>
       )}
-
     </div>
   );
-};
+}
 
 export default App;
