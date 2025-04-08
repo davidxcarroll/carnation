@@ -460,7 +460,7 @@ const App = () => {
         updatedAt: new Date()
       };
 
-      // Update local ideas state immediately
+      // Update local ideas state immediately - this is the source of truth
       setIdeas(prevIdeas => {
         return [...prevIdeas, newIdea];
       });
@@ -469,7 +469,8 @@ const App = () => {
       if (tagId) {
         await addTagToIdea(tagId, newIdeaRef.id);
       } else {
-        // If creating in "all" view or untagged column, explicitly add to untaggedIdeas
+        // Always add untagged ideas to untaggedIdeas array regardless of view mode
+        // This ensures consistent behavior across layout transitions
         setUntaggedIdeas(prevUntagged => {
           // Check if already in untagged ideas (avoid duplicates)
           if (prevUntagged.some(idea => idea.id === newIdeaRef.id)) {
@@ -477,27 +478,28 @@ const App = () => {
           }
           return [...prevUntagged, newIdea];
         });
-        
-        // If in horizontal view or groupByTag mode, make sure it appears in untagged column
-        if (viewLayout === 'horizontal' || groupByTag) {
-          const untaggedRef = columnRefs.current.untagged;
-          if (untaggedRef && untaggedRef.current) {
-            const placeholder = untaggedRef.current.querySelector('[data-idea-id="placeholder"]');
-            if (placeholder) {
-              // Replace placeholder with the idea
-              const ideaDiv = document.createElement('div');
-              ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-              ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
-              ideaDiv.innerHTML = cleanContent || '';
-              placeholder.parentNode.replaceChild(ideaDiv, placeholder);
-            } else if (!untaggedRef.current.querySelector(`[data-idea-id="${newIdeaRef.id}"]`)) {
-              // Add to the column if not already there
-              const ideaDiv = document.createElement('div');
-              ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-              ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
-              ideaDiv.innerHTML = cleanContent || '';
-              untaggedRef.current.appendChild(ideaDiv);
-            }
+
+        // Update UI in the appropriate column
+        const columnToUpdate = viewLayout === 'vertical' && !groupByTag
+          ? columnRefs.current.all
+          : columnRefs.current.untagged;
+
+        if (columnToUpdate && columnToUpdate.current) {
+          const placeholder = columnToUpdate.current.querySelector('[data-idea-id="placeholder"]');
+          if (placeholder) {
+            // Replace placeholder with the idea
+            const ideaDiv = document.createElement('div');
+            ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+            ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
+            ideaDiv.innerHTML = cleanContent || '';
+            placeholder.parentNode.replaceChild(ideaDiv, placeholder);
+          } else if (!columnToUpdate.current.querySelector(`[data-idea-id="${newIdeaRef.id}"]`)) {
+            // Add to the column if not already there
+            const ideaDiv = document.createElement('div');
+            ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+            ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
+            ideaDiv.innerHTML = cleanContent || '';
+            columnToUpdate.current.appendChild(ideaDiv);
           }
         }
       }
@@ -753,35 +755,34 @@ const App = () => {
 
           const newContent = stripHtmlAndDecodeEntities(currentDiv.innerHTML);
 
+          // Update Firebase
           await updateDoc(doc(db, 'ideas', ideaId), {
             content: newContent,
             updatedAt: new Date()
           });
 
-          // If this is in the 'all' column, update it in all other columns too
-          if (columnType === 'all') {
-            updateIdeaInAllColumns(ideaId, newContent);
-            
-            // Also update the local ideas state
-            setIdeas(prevIdeas => 
-              prevIdeas.map(idea => 
-                idea.id === ideaId 
-                  ? { ...idea, content: newContent, updatedAt: new Date() } 
+          // Always update in all columns where this idea could appear
+          updateIdeaInAllColumns(ideaId, newContent);
+
+          // Always update the local ideas state - this is our source of truth
+          setIdeas(prevIdeas =>
+            prevIdeas.map(idea =>
+              idea.id === ideaId
+                ? { ...idea, content: newContent, updatedAt: new Date() }
+                : idea
+            )
+          );
+
+          // Check if this idea is untagged and update untaggedIdeas state
+          const isUntagged = !Object.values(tagIdeasMap).flat().includes(ideaId);
+          if (isUntagged) {
+            setUntaggedIdeas(prevUntagged =>
+              prevUntagged.map(idea =>
+                idea.id === ideaId
+                  ? { ...idea, content: newContent, updatedAt: new Date() }
                   : idea
               )
             );
-            
-            // Check if this idea is untagged and update untaggedIdeas if needed
-            const isUntagged = !Object.values(tagIdeasMap).flat().includes(ideaId);
-            if (isUntagged) {
-              setUntaggedIdeas(prevUntagged => 
-                prevUntagged.map(idea => 
-                  idea.id === ideaId 
-                    ? { ...idea, content: newContent, updatedAt: new Date() } 
-                    : idea
-                )
-              );
-            }
           }
 
           // Place cursor at the end again after update
@@ -816,34 +817,22 @@ const App = () => {
             // Just update the ID attribute, don't change anything else
             currentDiv.setAttribute('data-idea-id', newIdeaId);
 
-            // If in 'all' view, also make sure this idea appears in untagged column if necessary
-            if (columnType === 'all' && (viewLayout === 'horizontal' || groupByTag)) {
-              // Get the created idea content
-              const newContent = stripHtmlAndDecodeEntities(currentDiv.innerHTML);
-              
-              // Make sure it appears in the untagged column
+            // Get the created idea content
+            const newContent = stripHtmlAndDecodeEntities(currentDiv.innerHTML);
+
+            // Update visual representation in other layout modes if needed
+            if (viewLayout === 'vertical' && !groupByTag) {
+              // Created in vertical layout with no grouping, ensure it appears in untagged
               const untaggedRef = columnRefs.current.untagged;
               if (untaggedRef && untaggedRef.current) {
-                const existingIdea = untaggedRef.current.querySelector(`[data-idea-id="${newIdeaId}"]`);
-                if (!existingIdea) {
-                  // Check if there's a placeholder to replace
-                  const placeholder = untaggedRef.current.querySelector('[data-idea-id="placeholder"]');
-                  if (placeholder) {
-                    // Replace placeholder with the idea
-                    const ideaDiv = document.createElement('div');
-                    ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-                    ideaDiv.setAttribute('data-idea-id', newIdeaId);
-                    ideaDiv.innerHTML = newContent || '';
-                    placeholder.parentNode.replaceChild(ideaDiv, placeholder);
-                  } else {
-                    // Add the idea to the untagged column
-                    const ideaDiv = document.createElement('div');
-                    ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-                    ideaDiv.setAttribute('data-idea-id', newIdeaId);
-                    ideaDiv.innerHTML = newContent || '';
-                    untaggedRef.current.appendChild(ideaDiv);
-                  }
-                }
+                addIdeaToColumn(untaggedRef.current, newIdeaId, newContent);
+              }
+            } else if ((viewLayout === 'vertical' && groupByTag) || viewLayout === 'horizontal') {
+              // Created in vertical group by tag or horizontal layout
+              // Make sure it appears in the "all" column if we switch layouts
+              const allRef = columnRefs.current.all;
+              if (allRef && allRef.current) {
+                addIdeaToColumn(allRef.current, newIdeaId, newContent);
               }
             }
 
@@ -864,6 +853,30 @@ const App = () => {
 
     // When a keystroke happens, ensure all content is wrapped in idea-item divs
     ensureIdeaItemDivs(columnRef.current);
+  };
+
+  // Helper function to add idea to a column if it doesn't exist
+  const addIdeaToColumn = (columnElement, ideaId, content) => {
+    const existingIdea = columnElement.querySelector(`[data-idea-id="${ideaId}"]`);
+    if (!existingIdea) {
+      // Check if there's a placeholder to replace
+      const placeholder = columnElement.querySelector('[data-idea-id="placeholder"]');
+      if (placeholder) {
+        // Replace placeholder with the idea
+        const ideaDiv = document.createElement('div');
+        ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+        ideaDiv.setAttribute('data-idea-id', ideaId);
+        ideaDiv.innerHTML = content || '';
+        placeholder.parentNode.replaceChild(ideaDiv, placeholder);
+      } else {
+        // Add the idea to the column
+        const ideaDiv = document.createElement('div');
+        ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+        ideaDiv.setAttribute('data-idea-id', ideaId);
+        ideaDiv.innerHTML = content || '';
+        columnElement.appendChild(ideaDiv);
+      }
+    }
   };
 
   // Completely rewritten to avoid DOM manipulation during typing
@@ -1819,7 +1832,14 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
   // Handle sort by change
   const handleSortByChange = (sortType) => {
-    setSortBy(sortType);
+    // If clicking on the already selected sort option, toggle the sort order
+    if (sortType === sortBy) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Otherwise, change the sort type (default to descending for time, ascending for alphabetical)
+      setSortBy(sortType);
+      setSortOrder(sortType === 'time' ? 'desc' : 'asc');
+    }
   };
 
   // Handle sort order toggle
@@ -1937,25 +1957,36 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
   useEffect(() => {
     // Skip if no ideas or still initializing
     if (ideas.length === 0 || isInitialLoad) return;
-    
-    // When switching from vertical layout with groupByTag off to any other view
-    if (viewLayout === 'horizontal' || groupByTag) {
-      // Make sure untagged ideas includes all ideas not explicitly tagged
-      const taggedIdeaIds = new Set();
-      
-      // Collect all idea IDs that have explicit tags
-      Object.keys(tagIdeasMap).forEach(tagId => {
-        (tagIdeasMap[tagId] || []).forEach(ideaId => {
-          taggedIdeaIds.add(ideaId);
-        });
+
+    // When switching layouts, ensure proper synchronization of ideas
+    // Collect all tagged idea IDs
+    const taggedIdeaIds = new Set();
+    Object.keys(tagIdeasMap).forEach(tagId => {
+      (tagIdeasMap[tagId] || []).forEach(ideaId => {
+        taggedIdeaIds.add(ideaId);
       });
-      
-      // Find ideas with no tags and update untaggedIdeas
-      const untagged = ideas.filter(idea => !taggedIdeaIds.has(idea.id));
-      setUntaggedIdeas(untagged);
-      
-      // Only initialize untagged column if we're in horizontal view or groupByTag is on
+    });
+
+    // Find ideas with no tags and update untaggedIdeas
+    const untagged = ideas.filter(idea => !taggedIdeaIds.has(idea.id));
+    setUntaggedIdeas(untagged);
+
+    // Initialize the appropriate columns based on current layout mode
+    if (viewLayout === 'vertical' && !groupByTag) {
+      // In vertical layout without grouping, show all ideas in the "all" column
+      initializeColumnContent('all', ideas);
+    } else {
+      // In horizontal layout or vertical with grouping, display by tags
+      // Initialize untagged column
       initializeColumnContent('untagged', untagged);
+
+      // Initialize tag columns if they're selected
+      getTagsWithIdeas().forEach(tag => {
+        if (selectedTags[tag.id]) {
+          const taggedIdeas = getIdeasByTag(tag.id);
+          initializeColumnContent(tag.id, taggedIdeas);
+        }
+      });
     }
   }, [viewLayout, groupByTag, ideas, tagIdeasMap, isInitialLoad]);
 
@@ -1963,11 +1994,11 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
   useEffect(() => {
     // Skip if no ideas or still initializing
     if (ideas.length === 0 || isInitialLoad) return;
-    
+
     // Calculate the total number of ideas in tags
     let taggedCount = 0;
     const seenIdeaIds = new Set();
-    
+
     // Count each idea only once, even if it has multiple tags
     Object.keys(tagIdeasMap).forEach(tagId => {
       (tagIdeasMap[tagId] || []).forEach(ideaId => {
@@ -1977,10 +2008,10 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
         }
       });
     });
-    
+
     // Add untagged ideas count
     const totalCount = taggedCount + untaggedIdeas.length;
-    
+
     // Update the global tag counts with the total
     setGlobalTagCounts(prev => ({
       ...prev,
@@ -1989,705 +2020,811 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
   }, [untaggedIdeas, ideas, tagIdeasMap, isInitialLoad]);
 
   return (
-    <div className="h-screen flex flex-row text-white/80 text-sm bg-neutral-900 selection:bg-rose-500 selection:text-white selection:text-white caret-rose-500 font-pressura font-light">
-      <div className="h-full flex flex-1 flex-col px-2 shadow-[1px_0_0_rgba(255,255,255,0.05)]">
-        {/* Utility sidebar tabs */}
-        {/* tab: view */}
-        <div
-          className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'view' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
-          onClick={() => handleTabClick('view')}
-        >
-          <span className={`material-symbols-rounded text-base ${activeTab === 'view' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>visibility</span>
+    <div className="h-screen flex flex-col text-white/80 text-sm bg-neutral-900 selection:bg-rose-500 selection:text-white selection:text-white caret-rose-500 font-pressura font-light dark:[color-scheme:dark]">
+
+      <div className="h-full flex flex-row overflow-auto">
+
+        <div className="h-full flex flex-1 flex-col px-2 shadow-[1px_0_0_rgba(255,255,255,0.05)]">
+          {/* Utility sidebar tabs */}
+          {/* tab: view */}
+          <div
+            className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'brief' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
+            onClick={() => handleTabClick('brief')}
+          >
+            <span className={`material-symbols-rounded text-base ${activeTab === 'brief' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>explore</span>
+          </div>
+          {/* tab: view */}
+          <div
+            className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'view' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
+            onClick={() => handleTabClick('view')}
+          >
+            <span className={`material-symbols-rounded text-base ${activeTab === 'view' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>visibility</span>
+          </div>
+          {/* tab: tools */}
+          <div
+            className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tools' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
+            onClick={() => handleTabClick('tools')}
+          >
+            <span className={`material-symbols-rounded text-base ${activeTab === 'tools' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>widgets</span>
+          </div>
+          {/* tab: tips */}
+          <div
+            className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tips' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
+            onClick={() => handleTabClick('tips')}
+          >
+            <span className={`material-symbols-rounded text-base ${activeTab === 'tips' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>info</span>
+          </div>
         </div>
-        {/* tab: tools */}
-        <div
-          className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tools' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
-          onClick={() => handleTabClick('tools')}
-        >
-          <span className={`material-symbols-rounded text-base ${activeTab === 'tools' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>widgets</span>
-        </div>
-        {/* tab: tips */}
-        <div
-          className={`group w-10 h-12 flex flex-col justify-center items-center mt-2 -mb-2 select-none ${activeTab === 'tips' ? 'bg-neutral-800' : 'hover:bg-white/[2%]'} rounded-lg cursor-pointer`}
-          onClick={() => handleTabClick('tips')}
-        >
-          <span className={`material-symbols-rounded text-base ${activeTab === 'tips' ? 'filled text-white' : 'text-white/40 group-hover:text-white group-hover:scale-125 transition-[transform] duration-100 ease-in-out'}`}>info</span>
-        </div>
-      </div>
 
-      {/* Utility sidebar - only show when a tab is active */}
-      {activeTab && (
-        <div className="idea-sidebar h-full min-w-[340px] max-w-[400px] flex flex-col px-8 overflow-auto shadow-[1px_0_0_rgba(255,255,255,0.05)]">
-          {activeTab === 'view' && (
-            <>
-              <div className="w-[calc(100%+24px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
-                <div className="w-full">View</div>
-                <span
-                  className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
-                  onClick={() => setActiveTab(null)}
-                >
-                  close
-                </span>
-              </div>
-
-              <hr className="w-full border-[rgba(255,255,255,0.05)]" />
-
-              {/* Sort by select menu */}
-              <div className="flex flex-row items-center -mx-3 mt-3 px-3">
-
-                <div className="flex flex-row items-center gap-1 pt-1 pb-2 mr-2 text-white">
-                  <span className="material-symbols-rounded text-base">sort</span>
-                  Sort by
-                </div>
-
-                {/* Time sort option */}
-                <div
-                  className={`flex flex-row items-center gap-1 pt-1 pb-2 px-2 px-3 rounded-lg select-none ${sortBy === 'time' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
-                  onClick={() => handleSortByChange('time')}
-                >
-                  Time
-                </div>
-
-                {/* Alphabetical sort option */}
-                <div
-                  className={`flex flex-row items-center gap-1 pt-1 pb-2 px-2 px-3 rounded-lg select-none ${sortBy === 'alphabetical' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
-                  onClick={() => handleSortByChange('alphabetical')}
-                >
-                  Alpha
-                </div>
-
-                {/* Sort order toggle */}
-                <div
-                  className="flex flex-row items-center gap-1 py-1.5 px-2 px-3 -mx-3 rounded-lg select-none text-white/40 hover:bg-white/[2%] cursor-pointer ml-auto"
-                  onClick={handleSortOrderToggle}
-                >
-                  <span className="material-symbols-rounded text-base">
-                    {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+        {/* Utility sidebar - only show when a tab is active */}
+        {activeTab && (
+          <div className="idea-sidebar h-full min-w-[340px] max-w-[400px] flex flex-col px-8 overflow-auto shadow-[1px_0_0_rgba(255,255,255,0.05)]">
+            {activeTab === 'brief' && (
+              <>
+                <div className="w-full flex flex-row items-center justify-between w-full py-4 text-white">
+                  <div className="w-full">Brief</div>
+                  <span
+                    className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
+                    onClick={() => setActiveTab(null)}
+                  >
+                    close
                   </span>
                 </div>
 
-              </div>
-
-              <hr className="w-full my-3 border-[rgba(255,255,255,0.05)]" />
-
-              <div className="flex flex-row items-center justify-start gap-6 -mx-3 gap-1 px-3 text-white">
-                <div
-                  className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'vertical' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
-                  onClick={() => handleViewLayoutToggle('vertical')}
-                >
-                  <span className={`material-symbols-rounded text-base ${viewLayout === 'vertical' ? 'filled' : ''}`}>view_agenda</span>
-                  Vertical
-                </div>
-                <div
-                  className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'horizontal' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
-                  onClick={() => handleViewLayoutToggle('horizontal')}
-                >
-                  <span className={`material-symbols-rounded text-base ${viewLayout === 'horizontal' ? 'filled' : ''}`}>view_column_2</span>
-                  Horizontal
-                </div>
-              </div>
-
-              <hr className="w-full my-3 border-[rgba(255,255,255,0.05)]" />
-
-              {/* Only show Group by Tag toggle in vertical layout */}
-              {viewLayout === 'vertical' && (
-                <>
-                  <div className="flex flex-row items-center justify-start gap-6 -mx-3 gap-1 px-3 text-white">
-                    {/* Group by Tag toggle - only enabled in vertical view */}
-                    <div
-                      className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none hover:bg-white/[2%] cursor-pointer rounded-lg`}
-                      onClick={handleGroupByTagToggle}
-                    >
-                      <span className={`material-symbols-rounded text-base ${groupByTag ? 'filled text-white' : 'text-white/40'}`}>
-                        {groupByTag ? 'toggle_on' : 'toggle_off'}
-                      </span>
-                      <span className={`${groupByTag ? 'text-white' : 'text-white/40'}`}>Group by Tag</span>
-                    </div>
-                  </div>
-                  
-                  <hr className="w-full my-3 border-[rgba(255,255,255,0.05)]" />
-                </>
-              )}
-
-              {/* Only show Tags list when groupByTag is true or in horizontal layout */}
-              {(groupByTag || viewLayout === 'horizontal') && (
-                <>
-                  <div className="flex flex-row items-center justify-between gap-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
-                    <div className="w-full flex flex-row items-center gap-1 pt-1 pb-2 select-none" onClick={toggleAllTags}>
-                      <span className={`material-symbols-rounded text-base ${selectionState === 'all' || selectionState === 'indeterminate' ? 'filled' : ''}`}>
-                        {selectionState === 'all' ? 'check_box' :
-                          selectionState === 'indeterminate' ? 'indeterminate_check_box' :
-                            'check_box_outline_blank'}
-                      </span>
-                      <span className="">Tags</span>
-                      <span className="ml-1 opacity-40">{globalTagCounts.total || ideas.length}</span>
-                    </div>
-                    <div className="flex flex-row items-center gap-1">
-                      <span className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white">tune</span>
-                    </div>
-                  </div>
-
-                  {/* Untagged ideas item */}
-                  <div
-                    className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
-                    onClick={() => toggleTagSelection('untagged')}
-                  >
-                    <span className={`material-symbols-rounded text-base ${selectedTags['untagged'] ? 'filled' : ''} ${!selectedTags['untagged'] ? 'opacity-10' : ''}`}>
-                      {selectedTags['untagged'] ? 'check' : 'check_box_outline_blank'}
-                    </span>
-                    <span className={`${!selectedTags['untagged'] ? 'opacity-40' : ''}`}>untagged</span>
-                    <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
-                  </div>
-
-                  {/* show a list of tags */}
-                  {tags.map(tag => (
-                    <div
-                      key={tag.id}
-                      className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
-                      onClick={() => toggleTagSelection(tag.id)}
-                    >
-                      <span className={`material-symbols-rounded text-base ${selectedTags[tag.id] ? 'filled' : ''} ${!selectedTags[tag.id] ? 'opacity-10' : ''}`}>
-                        {selectedTags[tag.id] ? 'check' : 'check_box_outline_blank'}
-                      </span>
-                      <span className={`${!selectedTags[tag.id] ? 'opacity-40' : ''}`}>{tag.name}</span>
-                      <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
-                    </div>
-                  ))}
-                </>
-              )}
-            </>
-          )}
-
-          {activeTab === 'tools' && (
-            <>
-              <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
-                <div className="w-full">Tools</div>
-                <span
-                  className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
-                  onClick={() => setActiveTab(null)}
-                >
-                  close
-                </span>
-              </div>
-
-              <hr className="w-[calc(100%+22px)] -mx-3 border-[rgba(255,255,255,0.05)]" />
-            </>
-          )}
-
-          {activeTab === 'tips' && (
-            <>
-              <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full pt-4 pb-5 -mx-3 px-3 text-white">
-                <div className="w-full">Tips</div>
-                <span
-                  className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
-                  onClick={() => setActiveTab(null)}
-                >
-                  close
-                </span>
-              </div>
-
-              <hr className="w-[calc(100%+22px)] -mx-3 border-[rgba(255,255,255,0.05)]" />
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ideas container with dynamic class based on viewLayout */}
-      <div className={`w-full flex ${viewLayout === 'horizontal' ? 'flex-row gap-3' : 'flex-col'} p-3 pt-0 ${viewLayout === 'vertical' && !groupByTag ? 'h-full' : 'overflow-auto'}`}>
-        {/* When in vertical view, if groupByTag is false, show all ideas in a single column */}
-        {viewLayout === 'vertical' && !groupByTag ? (
-          <div className="relative min-w-[400px] flex flex-1 flex-col h-full">
-            <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
-              <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
-                {/* <span className="material-symbols-rounded text-base">notes</span> */}
-                All ideas <span className="ml-1 opacity-40">{ideas.length}</span>
-              </div>
-            </div>
-            <div
-              ref={columnRefs.current.all}
-              contentEditable
-              spellCheck="false"
-              className="flex-1 p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-              onInput={() => handleChange('all', 'all')}
-              onKeyDown={(e) => handleKeyDown(e, 'all', 'all')}
-              onKeyPress={(e) => handleKeyPress(e, 'all', 'all')}
-              onPaste={(e) => handlePaste(e, 'all', 'all')}
-              onFocus={() => handleFocus('all', 'all')}
-              onBlur={() => handleBlur('all', 'all')}
-            >
-              {/* Content will be set via initializeColumnContent */}
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Untagged column - always display if selected */}
-            {selectedTags['untagged'] && (
-              <div className="relative min-w-[400px] flex flex-1 flex-col">
-                <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
-                  <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
-                    <span className="material-symbols-rounded text-base">tag</span>
-                    untagged <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
-                  </div>
-                </div>
-                <div
-                  ref={columnRefs.current.untagged}
-                  contentEditable
-                  spellCheck="false"
-                  className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-                  onInput={() => handleChange('untagged', 'untagged')}
-                  onKeyDown={(e) => handleKeyDown(e, 'untagged', 'untagged')}
-                  onKeyPress={(e) => handleKeyPress(e, 'untagged', 'untagged')}
-                  onPaste={(e) => handlePaste(e, 'untagged', 'untagged')}
-                  onFocus={() => handleFocus('untagged', 'untagged')}
-                  onBlur={() => handleBlur('untagged', 'untagged')}
-                >
-                  {/* Content will be set via initializeColumnContent */}
-                </div>
-              </div>
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+              </>
             )}
-
-            {/* Tagged columns - display one per selected tag */}
-            {getTagsWithIdeas().map(tag => {
-              if (selectedTags[tag.id]) {
-                return (
-                  <div key={tag.id} className="relative min-w-[400px] flex flex-1 flex-col">
-                    <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
-                      <div className="flex items-center -mx-1 pb-1 pl-2 pr-3 whitespace-nowrap select-none">
-                        <span className="material-symbols-rounded text-base">tag</span>
-                        {tag.name} <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
-                      </div>
-                    </div>
-                    <div
-                      ref={columnRefs.current[tag.id]}
-                      contentEditable
-                      spellCheck="false"
-                      className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-                      onInput={() => handleChange('tag', tag.id)}
-                      onKeyDown={(e) => handleKeyDown(e, 'tag', tag.id)}
-                      onKeyPress={(e) => handleKeyPress(e, 'tag', tag.id)}
-                      onPaste={(e) => handlePaste(e, 'tag', tag.id)}
-                      onFocus={() => handleFocus('tag', tag.id)}
-                      onBlur={() => handleBlur('tag', tag.id)}
-                    >
-                      {/* Content will be set via initializeColumnContent */}
-                    </div>
-                  </div>
-                );
-              }
-              return null;
-            })}
-
-            {/* New tag column */}
-            <div className="relative group min-w-[400px] flex flex-1 flex-col">
-              <div className="min-h-14 max-h-14 flex justify-center items-center px-4">
-                {!newTagInputVisible ? (
-                  <div
-                    className="flex items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 group-hover:bg-white/5 group-hover:text-white rounded-full whitespace-nowrap select-none cursor-pointer"
-                    onClick={() => {
-                      setNewTagInputVisible(true);
-                      setTimeout(() => {
-                        if (newTagInputRef && newTagInputRef.current) {
-                          newTagInputRef.current.focus();
-                        }
-                      }, 0);
-                    }}
+            {activeTab === 'view' && (
+              <>
+                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between w-full py-4 -mx-3 px-3 text-white">
+                  <div className="w-full">View</div>
+                  <span
+                    className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
+                    onClick={() => setActiveTab(null)}
                   >
-                    <span className="material-symbols-rounded text-base">add</span>
-                    New tag
-                  </div>
-                ) : (
-                  <div
-                    className="relative w-full h-10 flex items-center justify-between gap-2 px-3 bg-white/[5%] rounded-lg"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      ref={newTagInputRef}
-                      type="text"
-                      value={newTagInputValue}
-                      onChange={handleNewTagInputChange}
-                      onKeyDown={handleNewTagInputKeyDown}
-                      className="w-full px-6 bg-transparent border-none outline-none placeholder:text-white/40 text-center"
-                      placeholder="Enter tag name"
-                      autoFocus
-                    />
-                    <span
-                      className="absolute top-1/2 -translate-y-1/2 right-3 material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white"
-                      onClick={(e) => {
-                        setNewTagInputVisible(false);
-                        setNewTagInputValue('');
-                      }}
-                    >cancel</span>
-                  </div>
-                )}
-              </div>
-              <div className="h-full p-4 focus:outline-none text-center leading-tight font-normal rounded-2xl border border-dashed border-white/[5%] whitespace-pre-wrap overflow-auto cursor-default select-none" />
-            </div>
-          </>
-        )}
-      </div>
+                    close
+                  </span>
+                </div>
 
-      {/* Context sidebar */}
-      {focusedIdeaId && focusedIdea && (
-        <div
-          className="idea-sidebar h-full min-w-[400px] flex flex-1 flex-col px-8 overflow-auto shadow-[-1px_0_0_rgba(255,255,255,0.05)]"
-          onMouseDown={(e) => {
-            // Prevent the mousedown from triggering a selection change
-            // This is critical since selection changes can cause the sidebar to close
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          onClick={(e) => {
-            // Prevent click events from bubbling up
-            e.stopPropagation();
-          }}
-        >
-          <div className="flex flex-1 flex-col justify-between">
-            <div className="flex flex-1 flex-col">
-              <div className="relative min-h-14 flex flex-row justify-between items-center gap-6 py-4 sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]">
-                {isTitleEditing ? (
-                  <input
-                    ref={titleEditRef}
-                    type="text"
-                    value={titleEditValue}
-                    onChange={handleTitleEditChange}
-                    onKeyDown={handleTitleEditKeyDown}
-                    onBlur={saveTitleEdit}
-                    className="h-10 w-[calc(100%+40px)] flex items-center px-3 pb-1 -mx-3 -my-2 bg-[#282828] border-none rounded-lg outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <div
-                    className="h-10 w-[calc(100%-12px)] flex items-center px-3 pb-1 -mx-3 -my-2 rounded-lg outline-none leading-tight hover:bg-white/[2%] cursor-text"
-                    onClick={startTitleEdit}
-                  >
-                    {stripHtmlAndDecodeEntities(focusedIdea.content)}
-                  </div>
-                )}
-                <span
-                  className="absolute top-1/2 -translate-y-1/2 -z-10 right-0 material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
-                  onMouseDown={(e) => {
-                    // Stop propagation to prevent the parent handler from blocking this click
-                    e.stopPropagation();
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    setFocusedIdeaId(null);
-                  }}
-                >
-                  close
-                </span>
-              </div>
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
 
-              {/* Tags section */}
-              <div
-                className="flex flex-col justify-center py-4"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-              >
-                <div className="flex flex-row flex-wrap items-center -mx-2">
-                  {/* Display tags for this idea */}
-                  {ideaTags.map(tag => (
-                    <div key={tag.id} className="group flex items-center -mx-1 pb-1 pl-2 pr-3 hover:bg-white/5 rounded-full whitespace-nowrap select-none">
-                      <span className="group-hover:hidden material-symbols-rounded text-base">tag</span>
-                      <span
-                        className="hidden group-hover:block hover:scale-125 duration-100 ease-in-out material-symbols-rounded text-base cursor-pointer"
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemoveTag(tag.id);
-                        }}
-                      >
-                        close
+                {/* Sort by select menu */}
+                <div className="flex flex-row items-center gap-4 -mx-3 mt-2 px-3">
+
+                  <div className="flex flex-row items-center gap-1 pt-1 pb-2 text-white">
+                    {/* <span className="material-symbols-rounded text-base">sort</span> */}
+                    Sort by
+                  </div>
+
+                  {/* Time sort option */}
+                  <div
+                    className={`min-h-9 flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 rounded-lg select-none ${sortBy === 'time' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
+                    onClick={() => handleSortByChange('time')}
+                  >
+                    {sortBy === 'time' && (
+                      <span className="material-symbols-rounded text-base">
+                        {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
                       </span>
-                      {tag.name}
-                    </div>
-                  ))}
+                    )}
+                    Time
+                  </div>
 
-                  {/* Add new tag button */}
+                  {/* Alphabetical sort option */}
                   <div
-                    className="w-fit flex justify-center items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/5 rounded-full whitespace-nowrap cursor-pointer"
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      setTagInputVisible(!tagInputVisible);
-                      setTagInputValue('');
-                    }}
+                    className={`min-h-9 flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 rounded-lg select-none ${sortBy === 'alphabetical' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
+                    onClick={() => handleSortByChange('alphabetical')}
                   >
-                    <span className="material-symbols-rounded text-base">add</span>
-                    Tag
+                    {sortBy === 'alphabetical' && (
+                      <span className="material-symbols-rounded text-base">
+                        {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                      </span>
+                    )}
+                    Alpha
+                  </div>
+
+                  {/* Remove the separate Sort order toggle button */}
+
+                </div>
+
+                <hr className="w-full my-2 border-[rgba(255,255,255,0.05)]" />
+
+                <div className="flex flex-row items-center justify-start gap-4 -mx-3 gap-1 px-3 text-white">
+
+                  <span className="pb-1">Layout</span>
+
+                  <div
+                    className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'vertical' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
+                    onClick={() => handleViewLayoutToggle('vertical')}
+                  >
+                    <span className={`material-symbols-rounded text-base ${viewLayout === 'vertical' ? 'filled' : ''}`}>view_agenda</span>
+                    Vertical
+                  </div>
+                  <div
+                    className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none ${viewLayout === 'horizontal' ? 'text-white' : 'text-white/40'} leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer`}
+                    onClick={() => handleViewLayoutToggle('horizontal')}
+                  >
+                    <span className={`material-symbols-rounded text-base ${viewLayout === 'horizontal' ? 'filled' : ''}`}>view_column_2</span>
+                    Horizontal
                   </div>
                 </div>
 
-                {/* Add new tag input */}
-                {tagInputVisible && (
-                  <div
-                    className="flex flex-col -mx-3 mt-2 text-white bg-white/[2%] whitespace-nowrap rounded-lg overflow-clip"
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                    }}
-                  >
-                    {/* Input field */}
-                    <div
-                      className="w-full h-10 flex items-center gap-2 px-3 bg-white/[5%] rounded-lg"
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                      }}
-                    >
-                      <input
-                        type="text"
-                        value={tagInputValue}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          handleTagInputChange(e);
-                        }}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          handleTagInputKeyDown(e);
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                        }}
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          // Don't prevent default here to allow text selection in the input
-                        }}
-                        autoFocus
-                        className="w-full bg-transparent border-none outline-none placeholder:text-white/40"
-                      />
-                      <span
-                        className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white"
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setTagInputVisible(false);
-                          setTagInputValue('');
-                        }}
-                      >cancel</span>
+                <hr className="w-full my-2 border-[rgba(255,255,255,0.05)]" />
+
+                {/* Only show Group by Tag toggle in vertical layout */}
+                {viewLayout === 'vertical' && (
+                  <>
+                    <div className="flex flex-row items-center justify-start gap-6 -mx-3 gap-1 px-3 text-white">
+                      {/* Group by Tag toggle - only enabled in vertical view */}
+                      <div
+                        className={`flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 select-none hover:bg-white/[2%] cursor-pointer rounded-lg`}
+                        onClick={handleGroupByTagToggle}
+                      >
+                        <span className={`material-symbols-rounded text-base ${groupByTag ? 'filled text-white' : 'text-white/40'}`}>
+                          {groupByTag ? 'toggle_on' : 'toggle_off'}
+                        </span>
+                        <span className={`${groupByTag ? 'text-white' : 'text-white/40'}`}>Group by Tag</span>
+                      </div>
                     </div>
 
-                    {/* Matching tags list */}
-                    {getFilteredTags().map(tag => {
-                      const isApplied = isTagApplied(tag.id);
-                      return (
-                        <div
-                          key={tag.id}
-                          className={`group h-11 flex items-center px-3 ${isApplied ? 'text-white/40' : ''} whitespace-nowrap select-none ${!isApplied ? 'hover:bg-white/[2%] cursor-pointer' : ''}`}
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            if (!isApplied) {
-                              addTagToIdea(tag.id, focusedIdeaId);
-                              setTagInputVisible(false);
-                              setTagInputValue('');
-                            }
-                          }}
-                        >
-                          <span className="material-symbols-rounded text-base">tag</span>
-                          <span className="w-full">{tag.name}</span>
-                          {isApplied ? (
-                            <span
-                              className="material-symbols-rounded text-base hidden group-hover:block cursor-pointer hover:text-white"
-                              onMouseDown={(e) => {
-                                e.stopPropagation();
-                              }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                                handleRemoveTag(tag.id);
-                              }}
-                            >
-                              remove
-                            </span>
-                          ) : (
-                            <span className="material-symbols-rounded text-base hidden group-hover:block">add</span>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {getFilteredTags().length > 0 && exactTagExists() && <hr className="border-[rgba(255,255,255,0.05)]" />}
-
-                    {/* Add new tag button */}
-                    {exactTagExists() && (
-                      <div
-                        className="h-11 flex items-center justify-between px-3 pb-1 whitespace-nowrap select-none hover:bg-white/[2%] cursor-pointer"
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          handleAddTag(tagInputValue.trim());
-                        }}
-                      >
-                        <span className="">Add "{tagInputValue.trim()}"</span>
-                        <span className="material-symbols-rounded text-base">check</span>
-                      </div>
+                    {groupByTag && (
+                      <hr className="w-full my-2 border-[rgba(255,255,255,0.05)]" />
                     )}
-                  </div>
+                  </>
                 )}
-              </div>
 
-              <hr className="border-[rgba(255,255,255,0.05)]" />
+                {/* Only show Tags list when groupByTag is true or in horizontal layout */}
+                {(groupByTag || viewLayout === 'horizontal') && (
+                  <>
 
-              {/* Notes section */}
-              <div
-                className="flex flex-col justify-center -mt-2 py-4"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-              >
-                <div className="w-[calc(100%+25px)] flex flex-col w-full -mx-3">
+                    <div className="flex flex-row items-center justify-between gap-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                      <div className="w-full flex flex-row items-center gap-1 pt-1 pb-2 select-none" onClick={toggleAllTags}>
+                        <span className={`material-symbols-rounded text-base ${selectionState === 'all' || selectionState === 'indeterminate' ? 'filled' : ''}`}>
+                          {selectionState === 'all' ? 'check_box' :
+                            selectionState === 'indeterminate' ? 'indeterminate_check_box' :
+                              'check_box_outline_blank'}
+                        </span>
+                        <span className="">Tags</span>
+                        {/* <span className="ml-1 opacity-40">{globalTagCounts.total || ideas.length}</span> */}
+                      </div>
+                      <div className="flex flex-row items-center gap-1">
+                        <span className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white">tune</span>
+                      </div>
+                    </div>
 
-                  {/* Display notes for this idea */}
-                  {ideaNotes
-                    .filter(note => note.ideaId === focusedIdeaId || note.isError)
-                    .map(note => (
-                      <div key={note.id} className={`group w-full flex flex-col gap-4 p-3 rounded-lg ${note.isError ? 'bg-red-900/20' : 'hover:shadow-[inset_0_0_1px_rgba(255,255,255,0.25)]'}`}>
-                        <div className={`whitespace-pre-wrap leading-tight break-words ${note.isIndex ? 'cursor-pointer' : ''}`}
-                          onClick={note.isIndex ? () => {
-                            window.open('https://console.firebase.google.com/project/_/firestore/indexes', '_blank');
-                          } : undefined}>
-                          {note.content}
-                        </div>
-                        {!note.isError && (
-                          <div className="flex justify-between items-start">
-                            <div className="text-sm text-white/40 mb-1">
-                              {note.createdAt.toLocaleString()}
-                            </div>
-                            <span
-                              className="hidden group-hover:block material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleDeleteNote(note.id);
-                              }}
-                            >
-                              delete
-                            </span>
-                          </div>
-                        )}
+                    {/* Untagged ideas item */}
+                    <div
+                      className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
+                      onClick={() => toggleTagSelection('untagged')}
+                    >
+                      <span className={`material-symbols-rounded text-base ${selectedTags['untagged'] ? 'filled' : ''} ${!selectedTags['untagged'] ? 'opacity-10' : ''}`}>
+                        {selectedTags['untagged'] ? 'check' : 'check_box_outline_blank'}
+                      </span>
+                      <span className={`${!selectedTags['untagged'] ? 'opacity-40' : ''}`}>untagged</span>
+                      <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
+                    </div>
+
+                    {/* show a list of tags */}
+                    {tags.map(tag => (
+                      <div
+                        key={tag.id}
+                        className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
+                        onClick={() => toggleTagSelection(tag.id)}
+                      >
+                        <span className={`material-symbols-rounded text-base ${selectedTags[tag.id] ? 'filled' : ''} ${!selectedTags[tag.id] ? 'opacity-10' : ''}`}>
+                          {selectedTags[tag.id] ? 'check' : 'check_box_outline_blank'}
+                        </span>
+                        <span className={`${!selectedTags[tag.id] ? 'opacity-40' : ''}`}>{tag.name}</span>
+                        <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
                       </div>
                     ))}
+                  </>
+                )}
+              </>
+            )}
 
-                  {/* Add new note button or input */}
-                  {!noteInputVisible ? (
+            {activeTab === 'tools' && (
+              <>
+                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between w-full py-4 -mx-3 px-3 text-white">
+                  <div className="w-full">Tools</div>
+                  <span
+                    className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
+                    onClick={() => setActiveTab(null)}
+                  >
+                    close
+                  </span>
+                </div>
+
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+
+                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                  <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-neutral-500 text-black p-2 -my-4">
+                    <span className="material-symbols-rounded text-base filled">swap_horiz</span>
+                  </div>
+                  <div className="w-full -pt-1 pb-1">Importer Exporter</div>
+                </div>
+
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+
+                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                  <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-purple-500 text-black p-2 -my-4">
+                    <span className="material-symbols-rounded text-base filled">rocket_launch</span>
+                  </div>
+                  <div className="w-full -pt-1 pb-1">AI Boost</div>
+                </div>
+
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+
+                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                  <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-orange-500 text-black p-2 -my-4">
+                    <span className="material-symbols-rounded text-base filled">import_contacts</span>
+                  </div>
+                  <div className="w-full -pt-1 pb-1">Onym Library</div>
+                </div>
+
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+
+                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                  <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-teal-500 text-black p-2 -my-4">
+                    <span className="material-symbols-rounded text-base filled">workspaces</span>
+                  </div>
+                  <div className="w-full -pt-1 pb-1">Pieratt 3-Step</div>
+                </div>
+
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+              </>
+            )}
+
+            {activeTab === 'tips' && (
+              <>
+                <div className="w-full flex flex-row items-center justify-between w-full py-4 text-white">
+                  <div className="w-full">Tips</div>
+                  <span
+                    className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
+                    onClick={() => setActiveTab(null)}
+                  >
+                    close
+                  </span>
+                </div>
+
+                <hr className="w-full border-[rgba(255,255,255,0.05)]" />
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ideas container with dynamic class based on viewLayout */}
+        <div className={`w-full flex ${viewLayout === 'horizontal' ? 'flex-row gap-3' : 'flex-col'} p-3 pt-0 ${viewLayout === 'vertical' && !groupByTag ? 'h-full' : 'overflow-auto'}`}>
+          {/* When in vertical view, if groupByTag is false, show all ideas in a single column */}
+          {viewLayout === 'vertical' && !groupByTag ? (
+            <div className="relative min-w-[400px] flex flex-1 flex-col h-full">
+              <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
+                <div className="flex items-center -mx-1 pl-2 pr-3 whitespace-nowrap select-none">
+                  {/* <span className="material-symbols-rounded text-base">notes</span> */}
+                  All ideas <span className="ml-1 opacity-40">{ideas.length}</span>
+                </div>
+              </div>
+              <div
+                ref={columnRefs.current.all}
+                contentEditable
+                spellCheck="false"
+                className="flex-1 p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+                onInput={() => handleChange('all', 'all')}
+                onKeyDown={(e) => handleKeyDown(e, 'all', 'all')}
+                onKeyPress={(e) => handleKeyPress(e, 'all', 'all')}
+                onPaste={(e) => handlePaste(e, 'all', 'all')}
+                onFocus={() => handleFocus('all', 'all')}
+                onBlur={() => handleBlur('all', 'all')}
+              >
+                {/* Content will be set via initializeColumnContent */}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Untagged column - always display if selected */}
+              {selectedTags['untagged'] && (
+                <div className="relative min-w-[400px] flex flex-1 flex-col">
+                  <div
+                    className={`
+                  min-h-14 flex justify-center items-center p-4 mx-4
+                  ${viewLayout === 'vertical' && groupByTag
+                        ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]'
+                        : ''
+                      }
+                `}
+                  >
+                    <div className="flex items-center -mx-1 pl-2 pr-3 whitespace-nowrap select-none">
+                      <span className="material-symbols-rounded text-base">tag</span>
+                      untagged <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
+                    </div>
+                  </div>
+                  <div
+                    ref={columnRefs.current.untagged}
+                    contentEditable
+                    spellCheck="false"
+                    className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+                    onInput={() => handleChange('untagged', 'untagged')}
+                    onKeyDown={(e) => handleKeyDown(e, 'untagged', 'untagged')}
+                    onKeyPress={(e) => handleKeyPress(e, 'untagged', 'untagged')}
+                    onPaste={(e) => handlePaste(e, 'untagged', 'untagged')}
+                    onFocus={() => handleFocus('untagged', 'untagged')}
+                    onBlur={() => handleBlur('untagged', 'untagged')}
+                  >
+                    {/* Content will be set via initializeColumnContent */}
+                  </div>
+                </div>
+              )}
+
+              {/* Tagged columns - display one per selected tag */}
+              {getTagsWithIdeas().map(tag => {
+                if (selectedTags[tag.id]) {
+                  return (
+                    <div key={tag.id} className="relative min-w-[400px] flex flex-1 flex-col">
+                      <div
+                        className={`
+                        min-h-14 flex justify-center items-center p-4 mx-4
+                        ${viewLayout === 'vertical' && groupByTag
+                            ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]'
+                            : ''
+                          }
+                      `}
+                      >
+                        <div className="flex items-center -mx-1 pl-2 pr-3 whitespace-nowrap select-none">
+                          <span className="material-symbols-rounded text-base">tag</span>
+                          {tag.name} <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
+                        </div>
+                      </div>
+                      <div
+                        ref={columnRefs.current[tag.id]}
+                        contentEditable
+                        spellCheck="false"
+                        className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
+                        onInput={() => handleChange('tag', tag.id)}
+                        onKeyDown={(e) => handleKeyDown(e, 'tag', tag.id)}
+                        onKeyPress={(e) => handleKeyPress(e, 'tag', tag.id)}
+                        onPaste={(e) => handlePaste(e, 'tag', tag.id)}
+                        onFocus={() => handleFocus('tag', tag.id)}
+                        onBlur={() => handleBlur('tag', tag.id)}
+                      >
+                        {/* Content will be set via initializeColumnContent */}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })}
+
+              {/* New tag column */}
+              <div className="relative group min-w-[400px] flex flex-1 flex-col">
+                <div className="min-h-14 max-h-14 flex justify-center items-center px-4">
+                  {!newTagInputVisible ? (
                     <div
-                      className="w-fit flex justify-center items-center mt-2 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/5 rounded-full whitespace-nowrap cursor-pointer"
+                      className="flex items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 group-hover:bg-white/5 group-hover:text-white rounded-lg whitespace-nowrap select-none cursor-pointer"
                       onClick={() => {
-                        setNoteInputVisible(true);
+                        setNewTagInputVisible(true);
                         setTimeout(() => {
-                          if (noteInputRef.current) {
-                            noteInputRef.current.focus();
+                          if (newTagInputRef && newTagInputRef.current) {
+                            newTagInputRef.current.focus();
                           }
                         }, 0);
                       }}
                     >
                       <span className="material-symbols-rounded text-base">add</span>
-                      Note
+                      New tag
                     </div>
                   ) : (
-                    <div className="w-full flex flex-col mt-2">
-                      <textarea
-                        ref={noteInputRef}
-                        value={noteInputValue}
-                        onChange={handleNoteInputChange}
-                        onKeyDown={handleNoteInputKeyDown}
-                        className="w-full min-h-[100px] p-3 mb-2 bg-white/[5%] rounded-lg border-none outline-none placeholder:text-white/40 resize-y"
-                        placeholder="Add a note..."
+                    <div
+                      className="relative w-full h-10 flex items-center justify-between gap-2 px-3 bg-white/[5%] rounded-lg"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        ref={newTagInputRef}
+                        type="text"
+                        value={newTagInputValue}
+                        onChange={handleNewTagInputChange}
+                        onKeyDown={handleNewTagInputKeyDown}
+                        className="w-full px-6 bg-transparent border-none outline-none placeholder:text-white/40 text-center"
+                        placeholder="Enter tag name"
                         autoFocus
                       />
-                      <div className="flex justify-between gap-2">
-                        <button
-                          className="flex items-center pb-1 pl-2 pr-3 text-white bg-white/5 rounded-full whitespace-nowrap cursor-pointer"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleAddNote();
-                          }}
-                        >
-                          <span className="material-symbols-rounded text-base">add</span>
-                          Add Note
-                        </button>
-                        <button
-                          className="flex items-center pb-1 pl-2 pr-3 text-white/40 hover:text-white rounded-full whitespace-nowrap cursor-pointer"
-                          onClick={() => {
-                            setNoteInputVisible(false);
-                            setNoteInputValue('');
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
+                      <span
+                        className="absolute top-1/2 -translate-y-1/2 right-3 material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white"
+                        onClick={(e) => {
+                          setNewTagInputVisible(false);
+                          setNewTagInputValue('');
+                        }}
+                      >cancel</span>
                     </div>
                   )}
                 </div>
+                <div className="h-full p-4 focus:outline-none text-center leading-tight font-normal rounded-2xl border border-dashed border-white/[5%] whitespace-pre-wrap overflow-auto cursor-default select-none" />
               </div>
-            </div>
-
-            <hr className="border-[rgba(255,255,255,0.05)]" />
-
-            {/* Meta */}
-            <div className="min-h-14 flex flex-col justify-center gap-y-2 pt-4 pb-8">
-              {/* Delete button */}
-              <div className="text-white/40">Created {focusedIdea.createdAt.toDate ? focusedIdea.createdAt.toDate().toLocaleString() : focusedIdea.createdAt.toLocaleString()}</div>
-              <div className="text-white/40">Updated {focusedIdea.updatedAt.toDate ? focusedIdea.updatedAt.toDate().toLocaleString() : focusedIdea.updatedAt.toLocaleString()}</div>
-              <div
-                className="flex flex-row items-center gap-1 pb-1 text-white/40 hover:text-white/80 cursor-pointer"
-                onClick={() => {
-                  if (focusedIdeaId) {
-                    // Delete idea from Firebase
-                    deleteDoc(doc(db, 'ideas', focusedIdeaId))
-                      .then(() => {
-                        console.log(`Idea ${focusedIdeaId} deleted`);
-                        // Clear the focused idea
-                        setFocusedIdeaId(null);
-                      })
-                      .catch(error => {
-                        console.error("Error deleting idea:", error);
-                      });
-                  }
-                }}
-              >
-                <span className="material-symbols-rounded text-base">delete</span>
-                <span>Delete idea</span>
-              </div>
-            </div>
-          </div>
+            </>
+          )}
         </div>
-      )}
+
+        {/* Context sidebar */}
+        {
+          focusedIdeaId && focusedIdea && (
+            <div
+              className="idea-sidebar h-full min-w-[400px] flex flex-1 flex-col px-8 overflow-auto shadow-[-1px_0_0_rgba(255,255,255,0.05)]"
+              onMouseDown={(e) => {
+                // Prevent the mousedown from triggering a selection change
+                // This is critical since selection changes can cause the sidebar to close
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                // Prevent click events from bubbling up
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-1 flex-col justify-between">
+                <div className="flex flex-1 flex-col">
+                  <div className="relative min-h-14 flex flex-row justify-between items-center gap-6 py-4 sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]">
+                    {isTitleEditing ? (
+                      <input
+                        ref={titleEditRef}
+                        type="text"
+                        value={titleEditValue}
+                        onChange={handleTitleEditChange}
+                        onKeyDown={handleTitleEditKeyDown}
+                        onBlur={saveTitleEdit}
+                        className="h-10 w-[calc(100%+40px)] flex items-center px-3 -mx-3 -my-2 bg-[#282828] border-none rounded-lg outline-none"
+                        autoFocus
+                      />
+                    ) : (
+                      <div
+                        className="h-10 w-[calc(100%-12px)] flex items-center px-3 -mx-3 -my-2 rounded-lg outline-none leading-tight hover:bg-white/[2%] cursor-text"
+                        onClick={startTitleEdit}
+                      >
+                        {stripHtmlAndDecodeEntities(focusedIdea.content)}
+                      </div>
+                    )}
+                    <span
+                      className={`absolute top-1/2 -translate-y-1/2 -z-10 right-0 material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled ${viewLayout === 'vertical' ? 'hidden' : ''}`}
+                      onMouseDown={(e) => {
+                        // Stop propagation to prevent the parent handler from blocking this click
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setFocusedIdeaId(null);
+                      }}
+                    >
+                      close
+                    </span>
+                  </div>
+
+                  {/* Tags section */}
+                  <div
+                    className="flex flex-col justify-center py-4"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                  >
+                    <div className="flex flex-row flex-wrap items-center -mx-2">
+                      {/* Display tags for this idea */}
+                      {ideaTags.map(tag => (
+                        <div key={tag.id} className="group flex items-center -mx-1 pb-1 pl-2 pr-3 hover:bg-white/5 rounded-lg whitespace-nowrap select-none">
+                          <span className="group-hover:hidden material-symbols-rounded text-base">tag</span>
+                          <span
+                            className="hidden group-hover:block hover:scale-125 duration-100 ease-in-out material-symbols-rounded text-base cursor-pointer"
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveTag(tag.id);
+                            }}
+                          >
+                            close
+                          </span>
+                          {tag.name}
+                        </div>
+                      ))}
+
+                      {/* Add new tag button */}
+                      <div
+                        className="w-fit flex justify-center items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg whitespace-nowrap cursor-pointer"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setTagInputVisible(!tagInputVisible);
+                          setTagInputValue('');
+                        }}
+                      >
+                        <span className="material-symbols-rounded text-base">add</span>
+                        Tag
+                      </div>
+                    </div>
+
+                    {/* Add new tag input */}
+                    {tagInputVisible && (
+                      <div
+                        className="flex flex-col -mx-3 mt-2 text-white bg-white/[2%] whitespace-nowrap rounded-lg overflow-clip"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
+                      >
+                        {/* Input field */}
+                        <div
+                          className="w-full h-10 flex items-center gap-2 px-3 bg-white/[5%] rounded-lg"
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                          }}
+                        >
+                          <input
+                            type="text"
+                            value={tagInputValue}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleTagInputChange(e);
+                            }}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              handleTagInputKeyDown(e);
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                            }}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              // Don't prevent default here to allow text selection in the input
+                            }}
+                            autoFocus
+                            className="w-full bg-transparent border-none outline-none placeholder:text-white/40"
+                          />
+                          <span
+                            className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white"
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              setTagInputVisible(false);
+                              setTagInputValue('');
+                            }}
+                          >cancel</span>
+                        </div>
+
+                        {/* Matching tags list */}
+                        {getFilteredTags().map(tag => {
+                          const isApplied = isTagApplied(tag.id);
+                          return (
+                            <div
+                              key={tag.id}
+                              className={`group h-11 flex items-center px-3 ${isApplied ? 'text-white/40' : ''} whitespace-nowrap select-none ${!isApplied ? 'hover:bg-white/[2%] cursor-pointer' : ''}`}
+                              onMouseDown={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                if (!isApplied) {
+                                  addTagToIdea(tag.id, focusedIdeaId);
+                                  setTagInputVisible(false);
+                                  setTagInputValue('');
+                                }
+                              }}
+                            >
+                              <span className="material-symbols-rounded text-base">tag</span>
+                              <span className="w-full">{tag.name}</span>
+                              {isApplied ? (
+                                <span
+                                  className="material-symbols-rounded text-base hidden group-hover:block cursor-pointer hover:text-white"
+                                  onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    handleRemoveTag(tag.id);
+                                  }}
+                                >
+                                  remove
+                                </span>
+                              ) : (
+                                <span className="material-symbols-rounded text-base hidden group-hover:block">add</span>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                        {getFilteredTags().length > 0 && exactTagExists() && <hr className="border-[rgba(255,255,255,0.05)]" />}
+
+                        {/* Add new tag button */}
+                        {exactTagExists() && (
+                          <div
+                            className="h-11 flex items-center justify-between px-3 pb-1 whitespace-nowrap select-none hover:bg-white/[2%] cursor-pointer"
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleAddTag(tagInputValue.trim());
+                            }}
+                          >
+                            <span className="">Add "{tagInputValue.trim()}"</span>
+                            <span className="material-symbols-rounded text-base">check</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <hr className="border-[rgba(255,255,255,0.05)]" />
+
+                  {/* Notes section */}
+                  <div
+                    className="flex flex-col justify-center -mt-2 py-4"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                  >
+                    <div className="w-[calc(100%+24px)] flex flex-col w-full -mx-3">
+
+                      {/* Display notes for this idea */}
+                      {ideaNotes
+                        .filter(note => note.ideaId === focusedIdeaId || note.isError)
+                        .map(note => (
+                          <div key={note.id} className={`group w-full flex flex-col gap-4 p-3 rounded-lg ${note.isError ? 'bg-red-900/20' : 'hover:shadow-[inset_0_0_1px_rgba(255,255,255,0.25)]'}`}>
+                            <div className={`whitespace-pre-wrap leading-tight break-words ${note.isIndex ? 'cursor-pointer' : ''}`}
+                              onClick={note.isIndex ? () => {
+                                window.open('https://console.firebase.google.com/project/_/firestore/indexes', '_blank');
+                              } : undefined}>
+                              {note.content}
+                            </div>
+                            {!note.isError && (
+                              <div className="flex justify-between items-start">
+                                <div className="text-sm text-white/40 mb-1">
+                                  {note.createdAt.toLocaleString()}
+                                </div>
+                                <span
+                                  className="hidden group-hover:block material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleDeleteNote(note.id);
+                                  }}
+                                >
+                                  delete
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                      {/* Add new note button or input */}
+                      {!noteInputVisible ? (
+                        <div
+                          className="w-fit flex justify-center items-center mt-2 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg whitespace-nowrap cursor-pointer"
+                          onClick={() => {
+                            setNoteInputVisible(true);
+                            setTimeout(() => {
+                              if (noteInputRef.current) {
+                                noteInputRef.current.focus();
+                              }
+                            }, 0);
+                          }}
+                        >
+                          <span className="material-symbols-rounded text-base">add</span>
+                          Note
+                        </div>
+                      ) : (
+                        <div className="w-full flex flex-col mt-2">
+                          <div className="w-full grid">
+                            <textarea
+                              ref={noteInputRef}
+                              value={noteInputValue}
+                              onChange={handleNoteInputChange}
+                              onKeyDown={handleNoteInputKeyDown}
+                              className="w-[calc(100%+24px)] min-h-[36px] p-3 mb-2 bg-white/[2%] focus:bg-white/[5%] rounded-lg border-none outline-none placeholder:text-white/40 resize-none overflow-hidden col-start-1 row-start-1"
+                              placeholder="Add a note..."
+                              autoFocus
+                            />
+                            <div
+                              className="w-[calc(100%+24px)] p-3 mb-2 whitespace-pre-wrap invisible overflow-hidden col-start-1 row-start-1"
+                              aria-hidden="true"
+                            >
+                              {noteInputValue + '\n'}
+                            </div>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <button
+                              className="flex items-center pb-1 pl-2 pr-3 text-white bg-white/[2%] hover:bg-white/[5%] rounded-lg whitespace-nowrap cursor-pointer"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleAddNote();
+                              }}
+                            >
+                              <span className="material-symbols-rounded text-base">add</span>
+                              Add Note
+                            </button>
+                            <button
+                              className="flex items-center pb-1 pl-2 pr-3 text-white/40 hover:text-white rounded-lg whitespace-nowrap cursor-pointer"
+                              onClick={() => {
+                                setNoteInputVisible(false);
+                                setNoteInputValue('');
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <hr className="border-[rgba(255,255,255,0.05)]" />
+
+                {/* Meta */}
+                <div className="min-h-14 flex flex-col justify-center gap-y-2 pt-4 pb-8">
+                  {/* Delete button */}
+                  <div className="text-white/40">Created {focusedIdea.createdAt.toDate ? focusedIdea.createdAt.toDate().toLocaleString() : focusedIdea.createdAt.toLocaleString()}</div>
+                  <div className="text-white/40">Updated {focusedIdea.updatedAt.toDate ? focusedIdea.updatedAt.toDate().toLocaleString() : focusedIdea.updatedAt.toLocaleString()}</div>
+                  <div
+                    className="flex flex-row items-center gap-1 pb-1 text-white/40 hover:text-white/80 cursor-pointer"
+                    onClick={() => {
+                      if (focusedIdeaId) {
+                        // Delete idea from Firebase
+                        deleteDoc(doc(db, 'ideas', focusedIdeaId))
+                          .then(() => {
+                            console.log(`Idea ${focusedIdeaId} deleted`);
+                            // Clear the focused idea
+                            setFocusedIdeaId(null);
+                          })
+                          .catch(error => {
+                            console.error("Error deleting idea:", error);
+                          });
+                      }
+                    }}
+                  >
+                    <span className="material-symbols-rounded text-base">delete</span>
+                    <span>Delete idea</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        }
+      </div>
+      <div className="flex flex-row gap-3 px-6 pt-3 pb-4 bg-black/20 shadow-[0_-1px_0_0_rgba(255,255,255,0.05)]">
+        <div className="w-full flex flex-row gap-8">
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Brief</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight bg-white/[5%] rounded-lg cursor-pointer">Ideate</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Shortlist</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Validate</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Decide</div>
+        </div>
+        <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Settings</div>
+      </div>
     </div>
   );
 }
