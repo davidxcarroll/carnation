@@ -13,5 +13,8 @@ service cloud.firestore {
     match /notes/{noteId} {
       allow read, write: if true;  // Allow access to notes collection
     }
+    match /brief/{briefId} {
+      allow read, write: if true;  // Allow access to brief collection
+    }
   }
 } 

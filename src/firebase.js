@@ -20,9 +20,23 @@ const app = initializeApp(firebaseConfig);
 // Initialize Firebase services
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// If we're in development mode, connect to local emulator
+// This must happen BEFORE any other Firestore operations
+if (import.meta.env.DEV) {
+  try {
+    // Comment out to use production Firebase instead of emulator
+    // connectFirestoreEmulator(db, 'localhost', 8080);
+    // console.log('Using local Firestore emulator.');
+  } catch (error) {
+    console.error('Error connecting to emulator:', error);
+  }
+}
+
+// Initialize analytics after emulator setup
 export const analytics = getAnalytics(app);
 
-// Enable offline persistence
+// Enable offline persistence - must be after emulator connection
 try {
   enableIndexedDbPersistence(db)
     .catch((err) => {
@@ -34,17 +48,6 @@ try {
     });
 } catch (error) {
   console.error('Error enabling persistence:', error);
-}
-
-// If we're in development mode, use local emulator
-if (import.meta.env.DEV) {
-  try {
-    // Uncomment this line to connect to a local Firestore emulator if needed
-    // connectFirestoreEmulator(db, 'localhost', 8080);
-    console.log('Using local Firestore emulator.');
-  } catch (error) {
-    console.error('Error connecting to emulator:', error);
-  }
 }
 
 export default app; 

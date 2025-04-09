@@ -1,0 +1,15 @@
+      <div className="flex flex-row gap-8 px-6 pt-3 pb-4 bg-black/20 shadow-[0_-1px_0_0_rgba(255,255,255,0.05)]">
+        <div className="w-full flex flex-row gap-8">
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Brief</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight bg-white/[5%] rounded-lg cursor-pointer">Ideate</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Shortlist</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Validate</div>
+          <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Decide</div>
+        </div>
+        <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Settings</div>
+      </div>
+    </div>
+
+    {/* Small development mode indicator in bottom corner */}
+    {import.meta.env.DEV && (
+      <div className="fixed bottom-2 right-2 text-xs opacity-30 hover:opacity-70 transition-opacity z-50">
