@@ -7,39 +7,76 @@ import {
   getFirestore,
   serverTimestamp
 } from "firebase/firestore";
+import useFirebase from './hooks/useFirebase';
+import TagBadge from './components/TagBadge';
+import TagSelector from './components/TagSelector';
+import IdeaItem from './components/IdeaItem';
+import IdeaColumn from './components/IdeaColumn';
+import useTextUtils from './hooks/useTextUtils';
+import useTags from './hooks/useTags';
+import useIdeas from './hooks/useIdeas';
+// import useKeyboard from './hooks/useKeyboard'; // Will integrate later
 
-// Utility function to strip HTML tags and decode HTML entities
-const stripHtmlAndDecodeEntities = (html) => {
-  if (!html) return '';
-
-  // Create a temporary DOM element
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-
-  // Get the text content (this strips HTML tags)
-  let text = doc.body.textContent || '';
-
-  // Decode HTML entities by using the browser's built-in decoder
-  const textarea = document.createElement('textarea');
-  textarea.innerHTML = text;
-  return textarea.value;
-};
+// Utility function moved to utils/textUtils.js
 
 const App = () => {
-  const [ideas, setIdeas] = useState([]);
-  const [focusedIdeaId, setFocusedIdeaId] = useState(null);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [tags, setTags] = useState([]);
+  // Use our utility hooks
+  const { stripHtmlAndDecodeEntities, setCursorAtEnd } = useTextUtils();
+  const firebase = useFirebase(db);
+  
+  // Use the tags hook
+  const { 
+    tags, 
+    setTags,
+    selectedTags, 
+    setSelectedTags,
+    selectionState,
+    setSelectionState,
+    tagIdeasMap, 
+    setTagIdeasMap,
+    globalTagCounts, 
+    setGlobalTagCounts,
+    getTagsWithIdeas,
+    toggleTagSelection,
+    toggleAllTags,
+    updateSelectionState
+  } = useTags(db, firebase);
+  
+  // Use the ideas hook
+  const { 
+    ideas, 
+    setIdeas,
+    untaggedIdeas, 
+    setUntaggedIdeas,
+    focusedIdeaId, 
+    setFocusedIdeaId,
+    isInitialLoad, 
+    setIsInitialLoad,
+    sortBy, 
+    sortOrder,
+    isUpdatingRef,
+    // Functions we'll integrate later since they have duplicates
+    createNewIdea,
+    updateIdeaContent,
+    deleteIdea,
+    getFocusedIdea,
+    cleanupEmptyIdeas,
+    findUntaggedIdeas
+    // sortIdeas,
+    // toggleSortOrder,
+    // changeSortBy
+  } = useIdeas(db, firebase);
+
+  // We'll integrate useKeyboard hook later
+  // const { handleKeyDown, handleKeyPress, handlePaste } = useKeyboard(...);
+
+  // Remove duplicate state declarations
   const [tagInputVisible, setTagInputVisible] = useState(false);
   const [tagInputValue, setTagInputValue] = useState('');
   const [ideaTags, setIdeaTags] = useState([]);
-  const [globalTagCounts, setGlobalTagCounts] = useState({});
-  const [activeTab, setActiveTab] = useState('view');
-  const [selectedTags, setSelectedTags] = useState({ 'untagged': true });
-  const [selectionState, setSelectionState] = useState('all');
+  const [activeTab, setActiveTab] = useState(null);
   const [newTagInputVisible, setNewTagInputVisible] = useState(false);
   const [newTagInputValue, setNewTagInputValue] = useState('');
-  const [tagIdeasMap, setTagIdeasMap] = useState({});
-  const [untaggedIdeas, setUntaggedIdeas] = useState([]);
   // Notes states
   const [noteInputVisible, setNoteInputVisible] = useState(false);
   const [noteInputValue, setNoteInputValue] = useState('');
@@ -54,14 +91,15 @@ const App = () => {
   const [isTitleEditing, setIsTitleEditing] = useState(false);
   const [titleEditValue, setTitleEditValue] = useState('');
   // Group by tag state
-  const [groupByTag, setGroupByTag] = useState(true);
-  // Sort by options
-  const [sortBy, setSortBy] = useState('time'); // 'time' or 'alphabetical'
-  const [sortOrder, setSortOrder] = useState('desc'); // 'asc' or 'desc'
+  const [groupByTag, setGroupByTag] = useState(false);
+  // Add activeCollection state for refresh operations
+  const [activeCollection, setActiveCollection] = useState('default');
+
+  // New state to track if any column is in edit mode
+  const [isAnyColumnEditing, setIsAnyColumnEditing] = useState(false);
 
   const editorRef = useRef(null);
   const columnRefs = useRef({});
-  const isUpdatingRef = useRef(false);
   const updateTimeoutRef = useRef(null);
   const newTagInputRef = useRef(null);
   const noteInputRef = useRef(null);
@@ -71,17 +109,14 @@ const App = () => {
   const ideaTagsRef = collection(db, 'ideaTags');
   const notesRef = collection(db, 'notes');
   const briefRef = collection(db, 'brief');
+  // Add this after other refs and before the main component code
+  const suppressSelectionChangeRef = useRef(false);
 
   // Get ideas for a specific tag - moved to top to avoid "Cannot access before initialization" error
   const getIdeasByTag = (tagId) => {
     const ideaIds = tagIdeasMap[tagId] || [];
     return ideas.filter(idea => ideaIds.includes(idea.id))
       .sort((a, b) => a.order - b.order);
-  };
-
-  // Get tags that have ideas
-  const getTagsWithIdeas = () => {
-    return tags.filter(tag => globalTagCounts[tag.id] && globalTagCounts[tag.id] > 0);
   };
 
   // Initialize column refs
@@ -94,14 +129,19 @@ const App = () => {
 
     // Make sure each tag has a reference
     tags.forEach(tag => {
-      columnRefs.current[tag.id] = columnRefs.current[tag.id] || React.createRef();
+      if (!columnRefs.current[tag.id]) {
+        columnRefs.current[tag.id] = React.createRef();
+      }
     });
+    
+    console.log("Column refs updated:", Object.keys(columnRefs.current));
   }, [tags]);
 
   // Load ideas from Firebase on startup - modified to handle multiple columns
   useEffect(() => {
     try {
-      const q = query(ideasRef, orderBy('order', 'asc'));
+      // Use the same ordering as our refresh queries to ensure consistent results
+      const q = query(ideasRef, orderBy('updatedAt', 'desc'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
         // Skip if we're currently updating to avoid loops
         if (isUpdatingRef.current) return;
@@ -111,6 +151,8 @@ const App = () => {
             id: doc.id,
             ...doc.data()
           }));
+          
+          console.log(`Initial load: fetched ${ideasData.length} ideas`);
 
           // Only update state if we're not in the middle of creating a new idea
           if (!isUpdatingRef.current) {
@@ -120,6 +162,7 @@ const App = () => {
           // Only update the editor content on initial load
           if (isInitialLoad) {
             setIsInitialLoad(false);
+            // Using the hook version of cleanupEmptyIdeas
             cleanupEmptyIdeas(ideasData);
           }
         } catch (error) {
@@ -228,6 +271,7 @@ const App = () => {
   // Load all idea-tag relationships and organize by tag
   useEffect(() => {
     try {
+      console.log('Setting up idea-tags relationship listener');
       const unsubscribe = onSnapshot(ideaTagsRef, (snapshot) => {
         try {
           // Get all idea-tag relationships
@@ -235,6 +279,8 @@ const App = () => {
             id: doc.id,
             ...doc.data()
           }));
+          
+          console.log(`Loaded ${relationships.length} idea-tag relationships`);
 
           // Group ideas by tag ID
           const tagToIdeas = {};
@@ -266,10 +312,29 @@ const App = () => {
           // Find ideas with no tags
           const taggedIdeaIds = new Set(relationships.map(rel => rel.ideaId));
           const untagged = ideas.filter(idea => !taggedIdeaIds.has(idea.id));
+          console.log(`Found ${untagged.length} untagged ideas out of ${ideas.length} total ideas`);
           setUntaggedIdeas(untagged);
 
-          // Force initialize untagged column to ensure it reflects the current state
-          initializeColumnContent('untagged', untagged);
+          // Force initialize columns to ensure they reflect the current state
+          setTimeout(() => {
+            // Initialize untagged column
+            initializeColumnContent('untagged', untagged);
+            
+            // Initialize tag columns
+            tags.forEach(tag => {
+              if (columnRefs.current[tag.id] && tagToIdeas[tag.id]) {
+                const taggedIdeas = ideas.filter(idea => 
+                  tagToIdeas[tag.id].includes(idea.id)
+                );
+                initializeColumnContent(tag.id, taggedIdeas);
+              }
+            });
+            
+            // Initialize all ideas column if needed
+            if (columnRefs.current.all) {
+              initializeColumnContent('all', ideas);
+            }
+          }, 100);
         } catch (error) {
           console.error("Error processing tag-idea relationships:", error);
         }
@@ -314,6 +379,43 @@ const App = () => {
       .idea-item-focused, .idea-item-focused:hover {
         background-color: rgba(255, 255, 255, 0.05);
       }
+
+      /* Edit mode styles */
+      .edit-mode-active {
+        background-color: rgba(30, 30, 30, 0.5) !important;
+        padding: 12px !important;
+        line-height: 1.6 !important;
+      }
+      
+      .edit-mode-active .idea-item {
+        background-color: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        cursor: text !important;
+        color: rgba(255, 255, 255, 0.9) !important;
+        display: inline !important;
+        text-align: left !important;
+      }
+      
+      .edit-mode-active .idea-item::after {
+        content: '\\A';
+        white-space: pre;
+      }
+      
+      .edit-mode-active .idea-item:last-child::after {
+        content: '';
+      }
+      
+      .edit-mode-active .idea-item-focused,
+      .edit-mode-active .idea-item:hover {
+        background-color: transparent !important;
+      }
+      
+      .edit-textarea {
+        color: white !important;
+        text-align: left !important;
+      }
     `;
     document.head.appendChild(styleEl);
 
@@ -330,77 +432,23 @@ const App = () => {
       : columnRefs.current[columnId];
 
     if (!columnRef || !columnRef.current) return;
-
-    // Clear placeholder text
-    const placeholderDiv = columnRef.current.querySelector('[data-idea-id="placeholder"]');
-    if (placeholderDiv && placeholderDiv.textContent === 'Add ideas') {
-      // Replace placeholder with an empty idea div
-      const newDiv = document.createElement('div');
-      newDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-
-      // Generate a temporary ID that will be replaced when synced
-      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      newDiv.setAttribute('data-idea-id', tempId);
-      newDiv.setAttribute('data-has-placeholder', 'true');
-
-      // Add a non-breaking space to ensure the div has content and height
-      const textNode = document.createTextNode('\u00A0'); // Non-breaking space
-      newDiv.appendChild(textNode);
-
-      // Replace the placeholder with our new div
-      placeholderDiv.parentNode.replaceChild(newDiv, placeholderDiv);
-
-      // Focus the new div and set cursor at the beginning
-      newDiv.focus();
-
-      // Set the cursor position to beginning
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      const range = document.createRange();
-      range.setStart(newDiv.firstChild, 0);
-      range.setEnd(newDiv.firstChild, 0);
-      selection.addRange(range);
+    
+    // Check if the column is in edit mode
+    const isEditMode = columnRef.current.getAttribute('data-edit-mode') === 'true';
+    
+    // When a column gets focus, ensure it has a valid .idea-item, especially if it's empty
+    if (isEditMode && columnRef.current.childNodes.length === 0) {
+      // Create a placeholder div
+      const placeholderDiv = document.createElement('div');
+      placeholderDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 hover:bg-white/[2%] rounded-lg cursor-text';
+      placeholderDiv.style.color = 'rgba(255, 255, 255, 0.3)';
+      placeholderDiv.setAttribute('data-idea-id', 'placeholder');
+      placeholderDiv.textContent = 'Add ideas';
+      columnRef.current.appendChild(placeholderDiv);
+      
+      // Focus the placeholder
+      placeholderDiv.focus();
     }
-  };
-
-  // Set cursor at the end of text in a div
-  const setCursorAtEnd = (element) => {
-    if (!element) return;
-
-    // Check if element is a valid node
-    if (!element.nodeType) return;
-
-    // Try to place cursor at the end of the element
-    const range = document.createRange();
-    const selection = window.getSelection();
-
-    // Find the last text node if it exists
-    let lastTextNode = null;
-
-    if (element.nodeType === Node.TEXT_NODE) {
-      lastTextNode = element;
-    } else if (element.lastChild) {
-      // If it's an element node with children, find the last text node
-      const findLastTextNode = (node) => {
-        if (node.nodeType === Node.TEXT_NODE) return node;
-        if (node.lastChild) return findLastTextNode(node.lastChild);
-        return null;
-      };
-      lastTextNode = findLastTextNode(element);
-    }
-
-    if (lastTextNode && lastTextNode.nodeType === Node.TEXT_NODE) {
-      // If we found a text node, set the cursor to the end of its content
-      range.setStart(lastTextNode, lastTextNode.textContent.length);
-      range.setEnd(lastTextNode, lastTextNode.textContent.length);
-    } else {
-      // Otherwise, just put the cursor at the end of the element
-      range.selectNodeContents(element);
-      range.collapse(false); // Collapse to end
-    }
-
-    selection.removeAllRanges();
-    selection.addRange(range);
   };
 
   // Handle column blur - modified to prevent unwanted sync
@@ -410,106 +458,139 @@ const App = () => {
       : columnRefs.current[columnId];
 
     if (!columnRef || !columnRef.current) return;
-
-    // If editor is empty, show placeholder
-    if (columnRef.current.textContent.trim() === '') {
-      // Clear any existing content
-      columnRef.current.innerHTML = '';
-
-      // Add placeholder as a DOM element with forced text-white/30 style
-      const placeholderDiv = document.createElement('div');
-      placeholderDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 hover:bg-white/[2%] rounded-lg cursor-text';
-      placeholderDiv.style.color = 'rgba(255, 255, 255, 0.3)'; // Force color with inline style
-      placeholderDiv.setAttribute('data-idea-id', 'placeholder');
-      placeholderDiv.textContent = 'Add ideas';
-      columnRef.current.appendChild(placeholderDiv);
-    }
-
-    // Don't sync on blur to avoid cursor issues
+    
+    // Check if the column is in edit mode
+    const isEditMode = columnRef.current.getAttribute('data-edit-mode') === 'true';
+    if (!isEditMode) return;
+    
+    // When focus leaves a column, clean up:
+    // 1. Remove any placeholder divs if they weren't typed into
+    // 2. Remove any empty temp divs
+    
+    setTimeout(() => {
+      // Need to do this after a timeout to avoid race conditions with focus changes
+      
+      // Get the current active element to see if focus is still in this column
+      const activeElement = document.activeElement;
+      let insideColumn = columnRef.current.contains(activeElement);
+      
+      // If focus isn't inside this column anymore
+      if (!insideColumn) {
+        // Clean up temp divs with no content
+        const tempDivs = columnRef.current.querySelectorAll('.idea-item[data-idea-id^="temp-"]');
+        tempDivs.forEach(div => {
+          if (!div.textContent.trim()) {
+            div.remove();
+          }
+        });
+        
+        // Save all edited content
+        handleChange(columnType, columnId);
+      }
+    }, 100);
   };
 
   // Create a new idea in Firebase
-  const createNewIdea = async (content, tagId = null, insertAfterIndex = -1) => {
+  const handleCreateNewIdea = async (content, tagId = null, insertAfterIndex = -1) => {
     try {
-      // If insertAfterIndex is negative, just use the length of the relevant ideas array
-      const relevantIdeas = tagId
-        ? getIdeasByTag(tagId)
-        : untaggedIdeas;
-
-      if (insertAfterIndex < 0) {
-        insertAfterIndex = relevantIdeas.length - 1;
+      console.log(`Creating new idea with content: ${content}, tagId: ${tagId}`);
+      // Create the idea using our hook
+      const newIdea = await firebase.createIdea(content, tagId);
+      
+      if (!newIdea) {
+        console.error("Failed to create idea - no result returned");
+        return null;
       }
-
-      // Calculate new order based on surrounding ideas
-      const newOrder = insertAfterIndex >= 0 && relevantIdeas.length > 0
-        ? relevantIdeas[insertAfterIndex].order + 0.5
-        : ideas.length > 0 ? Math.max(...ideas.map(i => i.order)) + 1 : 0;
-
-      // Clean the content before storing
-      const cleanContent = stripHtmlAndDecodeEntities(content || '');
-
-      // Create new idea in Firebase
-      const newIdeaRef = await addDoc(ideasRef, {
-        content: cleanContent,
-        order: newOrder,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-
-      // Create the new idea object
-      const newIdea = {
-        id: newIdeaRef.id,
-        content: cleanContent,
-        order: newOrder,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-
-      // Update local ideas state immediately - this is the source of truth
-      setIdeas(prevIdeas => {
-        return [...prevIdeas, newIdea];
-      });
-
-      // If this idea is being created in a tag column, tag it immediately
-      if (tagId) {
-        await addTagToIdea(tagId, newIdeaRef.id);
-      } else {
-        // Always add untagged ideas to untaggedIdeas array regardless of view mode
-        // This ensures consistent behavior across layout transitions
-        setUntaggedIdeas(prevUntagged => {
-          // Check if already in untagged ideas (avoid duplicates)
-          if (prevUntagged.some(idea => idea.id === newIdeaRef.id)) {
-            return prevUntagged;
-          }
-          return [...prevUntagged, newIdea];
-        });
-
-        // Update UI in the appropriate column
-        const columnToUpdate = viewLayout === 'vertical' && !groupByTag
-          ? columnRefs.current.all
-          : columnRefs.current.untagged;
-
-        if (columnToUpdate && columnToUpdate.current) {
-          const placeholder = columnToUpdate.current.querySelector('[data-idea-id="placeholder"]');
-          if (placeholder) {
-            // Replace placeholder with the idea
-            const ideaDiv = document.createElement('div');
-            ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-            ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
-            ideaDiv.innerHTML = cleanContent || '';
-            placeholder.parentNode.replaceChild(ideaDiv, placeholder);
-          } else if (!columnToUpdate.current.querySelector(`[data-idea-id="${newIdeaRef.id}"]`)) {
-            // Add to the column if not already there
-            const ideaDiv = document.createElement('div');
-            ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-            ideaDiv.setAttribute('data-idea-id', newIdeaRef.id);
-            ideaDiv.innerHTML = cleanContent || '';
-            columnToUpdate.current.appendChild(ideaDiv);
-          }
+      
+      const newIdeaId = newIdea.id;
+      console.log(`New idea created with ID: ${newIdeaId}`, newIdea);
+      
+      // UI updates for real-time feedback
+      const columnToUpdate = tagId 
+        ? columnRefs.current[tagId]
+        : (viewLayout === 'vertical' && !groupByTag
+            ? columnRefs.current.all
+            : columnRefs.current.untagged);
+            
+      if (columnToUpdate && columnToUpdate.current) {
+        const placeholder = columnToUpdate.current.querySelector('[data-idea-id="placeholder"]');
+        if (placeholder) {
+          // Replace placeholder
+          const ideaDiv = document.createElement('div');
+          ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-pointer';
+          ideaDiv.setAttribute('data-idea-id', newIdeaId);
+          ideaDiv.innerHTML = content || '';
+          placeholder.parentNode.replaceChild(ideaDiv, placeholder);
+          
+          // Add click handler for selection
+          ideaDiv.addEventListener('click', () => {
+            // Set this idea as the focused idea
+            setFocusedIdeaId(newIdeaId);
+            
+            // Apply focused styling to this idea only
+            const allIdeas = document.querySelectorAll('.idea-item');
+            allIdeas.forEach(item => {
+              item.classList.remove('idea-item-focused');
+              item.classList.remove('bg-neutral-800');
+              item.classList.remove('text-white');
+              item.classList.add('text-white/60');
+            });
+            
+            ideaDiv.classList.add('idea-item-focused');
+            ideaDiv.classList.add('bg-neutral-800');
+            ideaDiv.classList.add('text-white');
+            ideaDiv.classList.remove('text-white/60');
+          });
+        } else {
+          // Add new idea to the column
+          const ideaDiv = document.createElement('div');
+          ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-pointer';
+          ideaDiv.setAttribute('data-idea-id', newIdeaId);
+          ideaDiv.innerHTML = content || '';
+          columnToUpdate.current.appendChild(ideaDiv);
+          
+          // Add click handler for selection
+          ideaDiv.addEventListener('click', () => {
+            // Set this idea as the focused idea
+            setFocusedIdeaId(newIdeaId);
+            
+            // Apply focused styling to this idea only
+            const allIdeas = document.querySelectorAll('.idea-item');
+            allIdeas.forEach(item => {
+              item.classList.remove('idea-item-focused');
+              item.classList.remove('bg-neutral-800');
+              item.classList.remove('text-white');
+              item.classList.add('text-white/60');
+            });
+            
+            ideaDiv.classList.add('idea-item-focused');
+            ideaDiv.classList.add('bg-neutral-800');
+            ideaDiv.classList.add('text-white');
+            ideaDiv.classList.remove('text-white/60');
+          });
         }
+      } else {
+        console.warn(`Column not found for update: ${tagId ? tagId : 'untagged'}`);
       }
-
-      return newIdeaRef.id;
+      
+      // Force a refresh of ideas from Firestore after a small delay
+      setTimeout(async () => {
+        // Force a refresh by setting a flag and triggering a re-render
+        console.log('Triggering data refresh after creating a new idea');
+        const ideasQuery = query(ideasRef, orderBy('updatedAt', 'desc'));
+        getDocs(ideasQuery).then(snapshot => {
+          const refreshedIdeas = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          console.log(`Fetched ${refreshedIdeas.length} ideas directly`);
+          setIdeas(refreshedIdeas);
+        }).catch(error => {
+          console.error('Error refreshing ideas:', error);
+        });
+      }, 500);
+      
+      return newIdeaId;
     } catch (error) {
       console.error("Error creating new idea:", error);
       return null;
@@ -523,8 +604,8 @@ const App = () => {
       const tagExists = tags.some(tag => tag.name.toLowerCase() === name.toLowerCase());
       if (tagExists) return null;
 
-      // Create new tag in Firebase
-      const newTagRef = await addDoc(tagsRef, {
+      // Create new tag in Firebase using our hook
+      const newTagRef = await firebase.addTag({
         name,
         createdAt: new Date() // Ensure createdAt is set for sorting
       });
@@ -537,31 +618,15 @@ const App = () => {
   };
 
   // Add tag to idea
-  const addTagToIdea = async (tagId, ideaId) => {
+  const handleAddTagToIdea = async (tagId, ideaId) => {
     if (!tagId || !ideaId) {
-      console.error("Missing tagId or ideaId in addTagToIdea");
+      console.error("Missing tagId or ideaId in handleAddTagToIdea");
       return;
     }
 
     try {
-      // Check if relationship already exists
-      const q = query(
-        ideaTagsRef,
-        where('tagId', '==', tagId),
-        where('ideaId', '==', ideaId)
-      );
-      const querySnapshot = await getDocs(q);
-
-      if (!querySnapshot.empty) {
-        return; // Relationship already exists
-      }
-
-      // Create relationship
-      await addDoc(ideaTagsRef, {
-        tagId,
-        ideaId,
-        createdAt: new Date()
-      });
+      // Use the firebase hook to add the tag
+      await firebase.addTagToIdea(tagId, ideaId);
 
       // Update tag columns immediately for better UX
       const taggedIdeas = getIdeasByTag(tagId);
@@ -596,26 +661,15 @@ const App = () => {
   };
 
   // Remove tag from idea
-  const removeTagFromIdea = async (tagId, ideaId) => {
+  const handleRemoveTagFromIdea = async (tagId, ideaId) => {
+    if (!tagId || !ideaId) {
+      console.error("Missing tagId or ideaId in handleRemoveTagFromIdea");
+      return;
+    }
+
     try {
-      // Find the relationship document
-      const q = query(
-        ideaTagsRef,
-        where('tagId', '==', tagId),
-        where('ideaId', '==', ideaId)
-      );
-      const querySnapshot = await getDocs(q);
-
-      if (querySnapshot.empty) {
-        return; // Relationship doesn't exist
-      }
-
-      // Delete all matching relationships
-      const deletePromises = querySnapshot.docs.map(doc =>
-        deleteDoc(doc.ref)
-      );
-
-      await Promise.all(deletePromises);
+      // Use the firebase hook to remove the tag
+      await firebase.removeTagFromIdea(tagId, ideaId);
 
       // Update tag column immediately for better UX
       const columnRef = columnRefs.current[tagId];
@@ -624,51 +678,6 @@ const App = () => {
         const ideaDiv = columnRef.current.querySelector(`[data-idea-id="${ideaId}"]`);
         if (ideaDiv) {
           ideaDiv.remove();
-
-          // If no ideas left, add placeholder
-          if (columnRef.current.querySelectorAll('.idea-item').length === 0) {
-            const placeholderDiv = document.createElement('div');
-            placeholderDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 hover:bg-white/[2%] rounded-lg cursor-text';
-            placeholderDiv.style.color = 'rgba(255, 255, 255, 0.3)'; // Force color with inline style
-            placeholderDiv.setAttribute('data-idea-id', 'placeholder');
-            placeholderDiv.textContent = 'Add ideas';
-            columnRef.current.appendChild(placeholderDiv);
-          }
-        }
-      }
-
-      // Check if this was the last tag for this idea
-      const allTagsForIdeaQuery = query(
-        ideaTagsRef,
-        where('ideaId', '==', ideaId)
-      );
-      const remainingTagsSnapshot = await getDocs(allTagsForIdeaQuery);
-
-      // If no more tags, add to untagged column
-      if (remainingTagsSnapshot.empty) {
-        const idea = ideas.find(i => i.id === ideaId);
-        const untaggedRef = columnRefs.current.untagged;
-
-        if (idea && untaggedRef && untaggedRef.current) {
-          const placeholder = untaggedRef.current.querySelector('[data-idea-id="placeholder"]');
-
-          if (placeholder) {
-            // Replace placeholder with the idea
-            const ideaDiv = document.createElement('div');
-            ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-            ideaDiv.setAttribute('data-idea-id', ideaId);
-            ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
-            placeholder.parentNode.replaceChild(ideaDiv, placeholder);
-          } else {
-            // Append the idea to the untagged column if it doesn't already exist
-            if (!untaggedRef.current.querySelector(`[data-idea-id="${ideaId}"]`)) {
-              const ideaDiv = document.createElement('div');
-              ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
-              ideaDiv.setAttribute('data-idea-id', ideaId);
-              ideaDiv.innerHTML = stripHtmlAndDecodeEntities(idea.content) || '';
-              untaggedRef.current.appendChild(ideaDiv);
-            }
-          }
         }
       }
     } catch (error) {
@@ -693,7 +702,7 @@ const App = () => {
       }
 
       // Add tag to idea
-      await addTagToIdea(tagId, focusedIdeaId);
+      await handleAddTagToIdea(tagId, focusedIdeaId);
 
       // Clear input and hide the tag input component
       setTagInputValue('');
@@ -704,160 +713,91 @@ const App = () => {
     }
   };
 
-  // Handle removing a tag from an idea
+  // Handle removing tags from focused idea
   const handleRemoveTag = async (tagId) => {
     if (!focusedIdeaId) return;
-    await removeTagFromIdea(tagId, focusedIdeaId);
+    
+    try {
+      // Use our handleRemoveTagFromIdea function
+      await handleRemoveTagFromIdea(tagId, focusedIdeaId);
+    } catch (error) {
+      console.error("Error removing tag:", error);
+    }
   };
 
   // Handle input changes for any column
   const handleChange = async (columnType, columnId) => {
-    const columnRef = columnRefs.current[columnId];
+    const columnRef = columnType === 'untagged'
+      ? columnRefs.current.untagged
+      : columnRefs.current[columnId];
+    
     if (!columnRef || !columnRef.current) return;
+    
+    // Check if the column is in edit mode - only process changes in edit mode
+    const isEditMode = columnRef.current.getAttribute('data-edit-mode') === 'true';
+    if (!isEditMode) return;
 
-    // Skip if already updating to avoid recursive loops
-    if (isUpdatingRef.current) return;
+    // In edit mode, we treat all ideas as one continuous document with ideas separated by line breaks
+    // We need to map each line to the appropriate idea div
 
-    // Get the current selection
-    const selection = window.getSelection();
-    if (!selection.rangeCount) return;
-
-    const range = selection.getRangeAt(0);
-
-    // Find the containing idea-item div
-    let currentDiv = range.startContainer;
-    while (currentDiv && (!currentDiv.classList || !currentDiv.classList.contains('idea-item'))) {
-      if (!currentDiv.parentNode) return;
-      currentDiv = currentDiv.parentNode;
-    }
-
-    if (!currentDiv || !currentDiv.classList.contains('idea-item')) return;
-
-    // Remember the caret position
-    const caretPosition = range.startOffset;
-    const textNode = range.startContainer;
-
-    // Force the cursor to the end of the text after a timeout
-    setTimeout(() => {
-      setCursorAtEnd(currentDiv);
-    }, 0);
-
-    // Get the idea ID
-    const ideaId = currentDiv.getAttribute('data-idea-id');
-    if (!ideaId || ideaId === 'placeholder') return;
-
-    // Do direct update to Firebase without changing the DOM
-    if (ideaId && !ideaId.startsWith('temp-')) {
-      // Skip rapid updates - only update after a brief pause in typing
-      if (updateTimeoutRef.current) {
-        clearTimeout(updateTimeoutRef.current);
-      }
-
-      updateTimeoutRef.current = setTimeout(async () => {
-        try {
-          // Set updating flag
-          isUpdatingRef.current = true;
-
-          const newContent = stripHtmlAndDecodeEntities(currentDiv.innerHTML);
-
-          // Update Firebase
-          await updateDoc(doc(db, 'ideas', ideaId), {
-            content: newContent,
-            updatedAt: new Date()
+    // Step 1: Get all existing idea elements
+    const ideaDivs = Array.from(columnRef.current.querySelectorAll('.idea-item'));
+    
+    // Step 2: Each div represents an idea, we need to update the content in each
+    let changedIdeas = [];
+    
+    // Process each idea div
+    for (let i = 0; i < ideaDivs.length; i++) {
+      const ideaDiv = ideaDivs[i];
+      const ideaId = ideaDiv.getAttribute('data-idea-id');
+      
+      // Skip placeholder
+      if (ideaId === 'placeholder') continue;
+      
+      // Get the content
+      const content = ideaDiv.innerHTML.trim();
+      const plainContent = stripHtmlAndDecodeEntities(content).trim();
+      
+      // For empty ideas, we'll delete them later in cleanup
+      if (!plainContent) continue;
+      
+      // For temp IDs, create a new idea
+      if (ideaId.startsWith('temp-')) {
+        if (plainContent) {
+          const newTagId = columnType === 'tag' ? columnId : null;
+          const newIdeaId = await handleCreateNewIdea(content, newTagId);
+          
+          // Update the div with the real ID
+          ideaDiv.setAttribute('data-idea-id', newIdeaId);
+          
+          changedIdeas.push({
+            id: newIdeaId,
+            content: plainContent
           });
-
-          // Always update in all columns where this idea could appear
-          updateIdeaInAllColumns(ideaId, newContent);
-
-          // Always update the local ideas state - this is our source of truth
-          setIdeas(prevIdeas =>
-            prevIdeas.map(idea =>
-              idea.id === ideaId
-                ? { ...idea, content: newContent, updatedAt: new Date() }
-                : idea
-            )
-          );
-
-          // Check if this idea is untagged and update untaggedIdeas state
-          const isUntagged = !Object.values(tagIdeasMap).flat().includes(ideaId);
-          if (isUntagged) {
-            setUntaggedIdeas(prevUntagged =>
-              prevUntagged.map(idea =>
-                idea.id === ideaId
-                  ? { ...idea, content: newContent, updatedAt: new Date() }
-                  : idea
-              )
-            );
-          }
-
-          // Place cursor at the end again after update
-          setCursorAtEnd(currentDiv);
-
-          // Reset updating flag after a delay
-          setTimeout(() => {
-            isUpdatingRef.current = false;
-          }, 500);
-        } catch (error) {
-          console.error("Error updating idea:", error);
-          isUpdatingRef.current = false;
         }
-      }, 1000);
-    } else if (ideaId.startsWith('temp-') && currentDiv.textContent.trim() !== '') {
-      // For temporary IDs, create a permanent idea without changing the DOM
-      if (updateTimeoutRef.current) {
-        clearTimeout(updateTimeoutRef.current);
+      } else {
+        // Existing idea - check for content changes
+        const existingIdea = ideas.find(idea => idea.id === ideaId);
+        if (existingIdea) {
+          const existingContent = stripHtmlAndDecodeEntities(existingIdea.content || '').trim();
+          
+          if (plainContent !== existingContent) {
+            // Content has changed, update in database
+            await handleUpdateIdeaContent(ideaId, content);
+            
+            changedIdeas.push({
+              id: ideaId,
+              content: plainContent
+            });
+          }
+        }
       }
-
-      updateTimeoutRef.current = setTimeout(async () => {
-        try {
-          // Set updating flag
-          isUpdatingRef.current = true;
-
-          // If we're in the 'all' column, create idea without a tag
-          const tagId = columnType === 'all' ? null :
-            (columnType === 'untagged' ? null : columnId);
-
-          const newIdeaId = await createNewIdea(currentDiv.innerHTML, tagId);
-          if (newIdeaId) {
-            // Just update the ID attribute, don't change anything else
-            currentDiv.setAttribute('data-idea-id', newIdeaId);
-
-            // Get the created idea content
-            const newContent = stripHtmlAndDecodeEntities(currentDiv.innerHTML);
-
-            // Update visual representation in other layout modes if needed
-            if (viewLayout === 'vertical' && !groupByTag) {
-              // Created in vertical layout with no grouping, ensure it appears in untagged
-              const untaggedRef = columnRefs.current.untagged;
-              if (untaggedRef && untaggedRef.current) {
-                addIdeaToColumn(untaggedRef.current, newIdeaId, newContent);
-              }
-            } else if ((viewLayout === 'vertical' && groupByTag) || viewLayout === 'horizontal') {
-              // Created in vertical group by tag or horizontal layout
-              // Make sure it appears in the "all" column if we switch layouts
-              const allRef = columnRefs.current.all;
-              if (allRef && allRef.current) {
-                addIdeaToColumn(allRef.current, newIdeaId, newContent);
-              }
-            }
-
-            // Place cursor at the end again after update
-            setCursorAtEnd(currentDiv);
-          }
-
-          // Reset updating flag after a delay
-          setTimeout(() => {
-            isUpdatingRef.current = false;
-          }, 500);
-        } catch (error) {
-          console.error("Error creating permanent idea:", error);
-          isUpdatingRef.current = false;
-        }
-      }, 1000);
     }
-
-    // When a keystroke happens, ensure all content is wrapped in idea-item divs
-    ensureIdeaItemDivs(columnRef.current);
+    
+    // Clean up ideas with empty content
+    if (changedIdeas.length > 0) {
+      handleCleanupEmptyIdeas(changedIdeas);
+    }
   };
 
   // Helper function to add idea to a column if it doesn't exist
@@ -968,10 +908,22 @@ const App = () => {
     if (needsUpdate && savedRange) {
       try {
         selection.removeAllRanges();
-        selection.addRange(savedRange);
+        safelyAddRange(selection, savedRange);
       } catch (e) {
-        console.log("Couldn't restore selection after ensuring idea divs");
+        console.debug("Couldn't restore selection after ensuring idea divs");
       }
+    }
+  };
+
+  // Add a helper function to safely add ranges to selection
+  const safelyAddRange = (selection, range) => {
+    if (!selection || !range) return;
+    
+    try {
+      selection.addRange(range);
+    } catch (error) {
+      // Silently handle "The given range isn't in document" errors
+      console.debug("Could not add range to selection:", error.message);
     }
   };
 
@@ -982,6 +934,10 @@ const App = () => {
       : columnRefs.current[columnId];
 
     if (!columnRef || !columnRef.current) return;
+    
+    // Check if the column is in edit mode - only process keydown in edit mode
+    const isEditMode = columnRef.current.getAttribute('data-edit-mode') === 'true';
+    if (!isEditMode) return;
 
     // Handle backspace at beginning of empty idea to delete it
     if (e.key === 'Backspace') {
@@ -997,134 +953,96 @@ const App = () => {
       if (currentDiv) {
         const ideaId = currentDiv.getAttribute('data-idea-id');
         // Only apply to real ideas, not placeholders
-        if (ideaId && ideaId !== 'placeholder' && !ideaId.startsWith('temp-')) {
-          const isEmpty = currentDiv.textContent.trim() === '' || currentDiv.textContent === '\u00A0';
-          const isAtStart = range.startOffset === 0;
-
-          // If at the start of an empty idea or the cursor is at the beginning of the idea
-          if (isEmpty || isAtStart) {
-            const ideaDivs = Array.from(columnRef.current.querySelectorAll('.idea-item'));
-            const currentIndex = ideaDivs.findIndex(div => div.getAttribute('data-idea-id') === ideaId);
-
-            // Find previous idea to focus after deletion (if there is one)
-            if (currentIndex > 0) {
-              const prevIdeaDiv = ideaDivs[currentIndex - 1];
-              const prevIdeaId = prevIdeaDiv.getAttribute('data-idea-id');
-
-              if (isEmpty) {
-                // Delete the empty idea from database
-                try {
-                  e.preventDefault();
-                  await deleteDoc(doc(db, 'ideas', ideaId));
-
-                  // Remove the div from DOM for immediate feedback
-                  currentDiv.remove();
-
-                  // Focus the previous idea and place cursor at the end
-                  setFocusedIdeaId(prevIdeaId);
-                  setCursorAtEnd(prevIdeaDiv);
-
-                  return; // Exit early after handling deletion
-                } catch (error) {
-                  console.error("Error deleting idea:", error);
-                }
-              }
+        if (ideaId && !ideaId.startsWith('temp-') && ideaId !== 'placeholder') {
+          const content = currentDiv.textContent.trim();
+          
+          if (content === '' || range.startOffset === 0) {
+            // Delete the empty idea
+            e.preventDefault();
+            await handleDeleteIdea(ideaId);
+            
+            // Find previous sibling idea to focus
+            let prevIdea = currentDiv.previousElementSibling;
+            if (prevIdea && prevIdea.classList.contains('idea-item')) {
+              prevIdea.focus();
+              setCursorAtEnd(prevIdea);
             }
+            
+            return;
           }
         }
       }
     }
 
+    // Handle enter key to create a new idea
     if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault(); // Prevent default Enter behavior
-
-      try {
-        // Set updating flag to prevent syncColumnIdeasWithDOM from running
-        isUpdatingRef.current = true;
-
-        // Get current position
-        const selection = window.getSelection();
-        const range = selection.getRangeAt(0);
-
-        // Find the containing idea-item div
-        let currentDiv = range.startContainer;
-        while (currentDiv && (!currentDiv.classList || !currentDiv.classList.contains('idea-item'))) {
-          currentDiv = currentDiv.parentNode;
+      e.preventDefault();
+      
+      // Stop default behavior of createRange
+      suppressSelectionChangeRef.current = true;
+      
+      const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
+      
+      // Find the containing idea-item div
+      let currentDiv = range.startContainer;
+      while (currentDiv && (!currentDiv.classList || !currentDiv.classList.contains('idea-item'))) {
+        currentDiv = currentDiv.parentNode;
+      }
+      
+      if (currentDiv) {
+        const ideaId = currentDiv.getAttribute('data-idea-id');
+        
+        // Handle creating new idea after this one
+        const ideaDivs = Array.from(columnRef.current.querySelectorAll('.idea-item'));
+        const currentIndex = ideaDivs.indexOf(currentDiv);
+        
+        // Create a new temp idea div to insert after the current one
+        const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const newIdeaDiv = document.createElement('div');
+        newIdeaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+        newIdeaDiv.setAttribute('data-idea-id', tempId);
+        
+        // If we're at the end of a line or the cursor isn't at the beginning,
+        // split the text and put the rest in the new div
+        if (range.startOffset > 0 || range.startContainer !== currentDiv.firstChild) {
+          // Save the selection
+          const selectedRange = range.cloneRange();
+          
+          // Split the text at cursor position
+          selectedRange.setEndAfter(currentDiv.lastChild);
+          const extractedText = selectedRange.extractContents();
+          
+          // Check if we extracted any content
+          if (extractedText.textContent.trim()) {
+            newIdeaDiv.appendChild(extractedText);
+          }
         }
-
-        if (!currentDiv) {
-          isUpdatingRef.current = false;
-          return; // Not inside an idea-item
-        }
-
-        const currentIdeaId = currentDiv.getAttribute('data-idea-id');
-        if (currentIdeaId === 'placeholder') {
-          isUpdatingRef.current = false;
-          return;
-        }
-
-        // Get the current text before and after the cursor
-        const beforeText = currentDiv.textContent.substring(0, range.startOffset);
-        const afterText = currentDiv.textContent.substring(range.startOffset);
-
-        // Update the current idea with just the text before the cursor
-        if (currentIdeaId && !currentIdeaId.startsWith('temp-')) {
-          await updateDoc(doc(db, 'ideas', currentIdeaId), {
-            content: stripHtmlAndDecodeEntities(beforeText),
-            updatedAt: new Date()
-          });
-
-          // Update the current div with the text before cursor
-          currentDiv.innerHTML = beforeText || '';
-        }
-
-        // Create new idea in Firebase with the text after the cursor
-        const newIdeaId = await createNewIdea(afterText, columnType === 'untagged' ? null : columnId, 0);
-
-        if (!newIdeaId) {
-          isUpdatingRef.current = false;
-          return;
-        }
-
-        // Create new div for the new idea
-        const newDiv = document.createElement('div');
-        newDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text idea-item-focused bg-neutral-800 text-white';
-        newDiv.setAttribute('data-idea-id', newIdeaId);
-
-        // Make sure we add a proper text node (not HTML)
-        const textNode = document.createTextNode(afterText || '');
-        newDiv.appendChild(textNode);
-
-        // Insert at the top of the column
-        const firstIdea = columnRef.current.querySelector('.idea-item');
-        if (firstIdea) {
-          columnRef.current.insertBefore(newDiv, firstIdea);
+        
+        // Insert the new div after the current one
+        if (currentDiv.nextSibling) {
+          currentDiv.parentNode.insertBefore(newIdeaDiv, currentDiv.nextSibling);
         } else {
-          columnRef.current.appendChild(newDiv);
+          currentDiv.parentNode.appendChild(newIdeaDiv);
         }
-
-        // Set focus state before focusing the element
-        setFocusedIdeaId(newIdeaId);
-
-        // Focus the new div and set cursor at end
-        newDiv.focus();
-        setCursorAtEnd(newDiv);
-
-        // Scroll into view smoothly
-        newDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-        // Clear any pending timeouts
-        if (updateTimeoutRef.current) {
-          clearTimeout(updateTimeoutRef.current);
-        }
-
-        // Reset the updating flag after a reasonable delay
+        
+        // Focus the new div
+        newIdeaDiv.focus();
+        
+        // Wait a moment, then try to create a permanent idea for the current div if needed
         setTimeout(() => {
-          isUpdatingRef.current = false;
-        }, 1000);
-      } catch (error) {
-        console.error("Error handling Enter key:", error);
-        isUpdatingRef.current = false;
+          // Only create a permanent idea if it's a temporary one with content
+          if (ideaId && ideaId.startsWith('temp-') && currentDiv.textContent.trim()) {
+            const newTagId = columnType === 'tag' ? columnId : null;
+            handleCreateNewIdea(currentDiv.innerHTML, newTagId, currentIndex);
+          }
+          
+          // Reset the selection change suppression
+          suppressSelectionChangeRef.current = false;
+          
+          selection.removeAllRanges();
+          safelyAddRange(selection, range);
+        }, 50);
       }
     }
   };
@@ -1136,65 +1054,99 @@ const App = () => {
       : columnRefs.current[columnId];
 
     if (!columnRef || !columnRef.current) return;
+    
+    // Check if the column is in edit mode - only process keypress in edit mode
+    const isEditMode = columnRef.current.getAttribute('data-edit-mode') === 'true';
+    if (!isEditMode) return;
 
-    // Find the active element or div containing cursor
+    // Check if this is a placeholder being typed into
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
-
+    
     const range = selection.getRangeAt(0);
+    
+    // Find the containing element
     let currentDiv = range.startContainer;
     while (currentDiv && (!currentDiv.classList || !currentDiv.classList.contains('idea-item'))) {
-      if (!currentDiv.parentNode) break;
       currentDiv = currentDiv.parentNode;
+      if (!currentDiv) return;
     }
-
-    // If we found a div with a placeholder, remove the placeholder before adding the character
-    if (currentDiv && currentDiv.nodeType === Node.ELEMENT_NODE && currentDiv.hasAttribute && currentDiv.hasAttribute('data-has-placeholder')) {
-      // Only do this for actual character keys, not control keys
-      if (e.key.length === 1) {
-        e.preventDefault(); // Prevent default character insertion
-
-        // Clear the div's content (remove the nbsp)
-        currentDiv.innerHTML = '';
-
-        // Insert the pressed character
-        const textNode = document.createTextNode(e.key);
-        currentDiv.appendChild(textNode);
-
-        // Move cursor to end of this character using our new helper function
-        setCursorAtEnd(currentDiv);
-
-        // Remove the placeholder marker
-        currentDiv.removeAttribute('data-has-placeholder');
-
-        // Don't sync with Firebase here - handleChange will do that
-      }
+    
+    if (currentDiv.getAttribute('data-idea-id') === 'placeholder') {
+      // Clear the placeholder text on first keystroke
+      e.preventDefault();
+      currentDiv.textContent = '';
+      currentDiv.setAttribute('data-idea-id', `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+      
+      // Reset styles
+      currentDiv.style.color = '';
+      currentDiv.classList.add('text-white');
+      
+      // Re-insert the key that was pressed
+      const textNode = document.createTextNode(e.key);
+      currentDiv.appendChild(textNode);
+      
+      // Set cursor at end
+      const newRange = document.createRange();
+      newRange.setStartAfter(textNode);
+      newRange.collapse(true);
+      
+      selection.removeAllRanges();
+      safelyAddRange(selection, newRange);
     }
   };
 
   // Handle paste event to strip formatting
   const handlePaste = (e, columnType, columnId) => {
-    e.preventDefault();
+    const columnRef = columnType === 'untagged'
+      ? columnRefs.current.untagged
+      : columnRefs.current[columnId];
 
+    if (!columnRef || !columnRef.current) return;
+    
+    // Check if the column is in edit mode - only process paste in edit mode
+    const isEditMode = columnRef.current.getAttribute('data-edit-mode') === 'true';
+    if (!isEditMode) return;
+
+    // Prevent default paste behavior
+    e.preventDefault();
+    
     // Get plain text from clipboard
     const text = e.clipboardData.getData('text/plain');
-
-    // Insert text at cursor position
+    if (!text) return;
+    
+    // Insert at cursor position
     const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    
     const range = selection.getRangeAt(0);
-
-    // Insert the text
-    range.deleteContents();
-    range.insertNode(document.createTextNode(text));
-
-    // Move cursor to end of pasted text
-    range.setStartAfter(range.endContainer);
-    range.setEndAfter(range.endContainer);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    // Sync with Firebase
-    syncColumnIdeasWithDOM(columnType, columnId);
+    
+    // Find the containing idea-item div
+    let currentDiv = range.startContainer;
+    while (currentDiv && (!currentDiv.classList || !currentDiv.classList.contains('idea-item'))) {
+      currentDiv = currentDiv.parentNode;
+      if (!currentDiv) return;
+    }
+    
+    // Handle paste into placeholder
+    if (currentDiv.getAttribute('data-idea-id') === 'placeholder') {
+      // Clear the placeholder and set a temporary ID
+      currentDiv.textContent = text;
+      currentDiv.setAttribute('data-idea-id', `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+      
+      // Reset styles
+      currentDiv.style.color = '';
+      
+      // Set cursor at end
+      setCursorAtEnd(currentDiv);
+      return;
+    }
+    
+    // Insert the text at the cursor position
+    document.execCommand('insertText', false, text);
+    
+    // Make sure the change is saved
+    handleChange(columnType, columnId);
   };
 
   // Handle tag input change
@@ -1202,18 +1154,26 @@ const App = () => {
     // Prevent event propagation to avoid triggering syncColumnIdeasWithDOM
     e.stopPropagation();
     setTagInputValue(e.target.value);
+    // Don't force focus here - it's causing typing issues
   };
 
   // Handle tag input key down events
   const handleTagInputKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleAddTag(tagInputValue.trim());
+      
+      // Only add if there's actual content
+      if (tagInputValue.trim()) {
+        handleAddTag(tagInputValue.trim());
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       setTagInputVisible(false);
       setTagInputValue('');
     }
+    
+    // Prevent propagation but don't interfere with normal keyboard behavior
+    e.stopPropagation();
   };
 
   // Get filtered tags based on input
@@ -1239,87 +1199,10 @@ const App = () => {
     return ideaTags.some(tag => tag.id === tagId);
   };
 
-  // Toggle tag selection state
-  const toggleTagSelection = (tagId) => {
-    setSelectedTags(prev => {
-      const newSelectedTags = { ...prev, [tagId]: !prev[tagId] };
-
-      // If this is the special 'untagged' tag, we need special handling
-      if (tagId === 'untagged') {
-        // Handle untagged logic here
-      }
-
-      // Update the selection state (all, none, or indeterminate)
-      updateSelectionState(newSelectedTags);
-
-      return newSelectedTags;
-    });
-  };
-
-  // Toggle all tags selection state
-  const toggleAllTags = () => {
-    // Cycle through states: none -> all -> none
-    if (selectionState === 'all') {
-      // If all are selected, deselect all
-      const newSelectedTags = { 'untagged': false };
-      tags.forEach(tag => {
-        newSelectedTags[tag.id] = false;
-      });
-      setSelectedTags(newSelectedTags);
-      setSelectionState('none');
-    } else {
-      // If none or some are selected, select all
-      const newSelectedTags = { 'untagged': true };
-      tags.forEach(tag => {
-        newSelectedTags[tag.id] = true;
-      });
-      setSelectedTags(newSelectedTags);
-      setSelectionState('all');
-    }
-  };
-
-  // Update the overall selection state based on individual selections
-  const updateSelectionState = (selectedTagsObj) => {
-    if (!tags.length) return;
-
-    // Count the total number of tag options (include untagged as a tag option)
-    const totalTagOptions = tags.length + 1;
-
-    // Count how many are selected
-    const selectedCount = Object.values(selectedTagsObj).filter(Boolean).length;
-
-    if (selectedCount === 0) {
-      setSelectionState('none');
-    } else if (selectedCount === totalTagOptions) {
-      setSelectionState('all');
-    } else {
-      setSelectionState('indeterminate');
-    }
-  };
-
   // Update selection state when tags change
   useEffect(() => {
     updateSelectionState(selectedTags);
-  }, [tags]);
-
-  // Reinitialize column content when tag selection changes
-  useEffect(() => {
-    // Skip on first render
-    if (isInitialLoad) return;
-
-    // Reinitialize content for untagged column if it's selected
-    if (selectedTags['untagged']) {
-      initializeColumnContent('untagged', untaggedIdeas);
-    }
-
-    // Reinitialize content for each selected tag
-    tags.forEach(tag => {
-      if (selectedTags[tag.id]) {
-        const taggedIdeas = getIdeasByTag(tag.id);
-        initializeColumnContent(tag.id, taggedIdeas);
-      }
-    });
-  }, [selectedTags, untaggedIdeas, tagIdeasMap, isInitialLoad, tags]);
+  }, [tags, updateSelectionState, selectedTags]);
 
   // Handle new tag input change
   const handleNewTagInputChange = (e) => {
@@ -1346,7 +1229,7 @@ const App = () => {
       // Store the newly created tag ID to focus its column
       if (tagId) {
         // Create first idea in this new tag
-        const newIdeaId = await createNewIdea('', tagId);
+        const newIdeaId = await handleCreateNewIdea('', tagId);
 
         // Set a timeout to allow the DOM to update with the new column
         setTimeout(() => {
@@ -1359,6 +1242,9 @@ const App = () => {
             if (firstIdea) {
               // Check if it's a placeholder
               const isPlaceholder = firstIdea.getAttribute('data-idea-id') === 'placeholder';
+              
+              // Create the element to focus
+              let ideaToFocus = firstIdea;
 
               if (isPlaceholder) {
                 // Replace placeholder with an empty editable div
@@ -1374,39 +1260,39 @@ const App = () => {
                 // Replace the placeholder
                 firstIdea.parentNode.replaceChild(newDiv, firstIdea);
 
-                // Set this as the new first idea
-                firstIdea = newDiv;
+                // Set this as the element to focus
+                ideaToFocus = newDiv;
               }
 
               // Focus the div and set the caret
-              firstIdea.focus();
+              ideaToFocus.focus();
 
               // Make sure it has a child for the selection
-              if (!firstIdea.firstChild) {
+              if (!ideaToFocus.firstChild) {
                 const textNode = document.createTextNode('\u00A0');
-                firstIdea.appendChild(textNode);
+                ideaToFocus.appendChild(textNode);
               }
 
               // Create a selection at the beginning
               const range = document.createRange();
-              range.setStart(firstIdea.firstChild, 0);
-              range.setEnd(firstIdea.firstChild, 0);
+              range.setStart(ideaToFocus.firstChild, 0);
+              range.setEnd(ideaToFocus.firstChild, 0);
 
               const selection = window.getSelection();
               selection.removeAllRanges();
               selection.addRange(range);
 
               // Add focus styling
-              firstIdea.classList.remove('text-white/60');
-              firstIdea.classList.add('text-white');
-              firstIdea.classList.add('idea-item-focused');
-              firstIdea.classList.add('bg-neutral-800');
+              ideaToFocus.classList.remove('text-white/60');
+              ideaToFocus.classList.add('text-white');
+              ideaToFocus.classList.add('idea-item-focused');
+              ideaToFocus.classList.add('bg-neutral-800');
 
               // Set this as the focused idea
               setFocusedIdeaId(newIdeaId);
 
               // Scroll into view if needed
-              firstIdea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              ideaToFocus.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
           }
         }, 500); // Wait for DOM to update
@@ -1510,7 +1396,21 @@ const App = () => {
   // Initialize column content with ideas
   const initializeColumnContent = (columnId, columnIdeas) => {
     const columnRef = columnRefs.current[columnId];
-    if (!columnRef || !columnRef.current) return;
+    if (!columnRef || !columnRef.current) {
+      console.warn(`No column ref found for ${columnId}`);
+      return;
+    }
+
+    // Check if the column is in edit mode
+    const isEditMode = columnRef.current.getAttribute('data-edit-mode') === 'true';
+    
+    // Don't modify the DOM if in edit mode - the textarea handles content
+    if (isEditMode) {
+      console.log(`Skipping initialization of ${columnId} because it's in edit mode`);
+      return;
+    }
+
+    console.log(`Initializing column ${columnId} with ${columnIdeas.length} ideas`);
 
     // Clear the current content
     columnRef.current.innerHTML = '';
@@ -1541,10 +1441,37 @@ const App = () => {
         });
       }
 
-      // Add each idea as a DOM element
+      console.log(`Rendering ${sortedIdeas.length} sorted ideas in column ${columnId}`);
+      sortedIdeas.forEach((idea, idx) => {
+        console.log(`  Idea ${idx + 1}: ${idea.id} - ${idea.content.substring(0, 20) || '[empty]'}`);
+      });
+
+      // In view mode, use the button-like styling
       sortedIdeas.forEach(idea => {
         const ideaDiv = document.createElement('div');
-        ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-text';
+        
+        // Make it function like a button
+        ideaDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 text-white/60 hover:bg-white/[2%] rounded-lg cursor-pointer';
+        
+        // Add a click handler for selection
+        ideaDiv.addEventListener('click', () => {
+          // Set this idea as the focused idea
+          setFocusedIdeaId(idea.id);
+          
+          // Apply focused styling to this idea only
+          const allIdeas = document.querySelectorAll('.idea-item');
+          allIdeas.forEach(item => {
+            item.classList.remove('idea-item-focused');
+            item.classList.remove('bg-neutral-800');
+            item.classList.remove('text-white');
+            item.classList.add('text-white/60');
+          });
+          
+          ideaDiv.classList.add('idea-item-focused');
+          ideaDiv.classList.add('bg-neutral-800');
+          ideaDiv.classList.add('text-white');
+          ideaDiv.classList.remove('text-white/60');
+        });
 
         // Apply focus styling if this was the focused idea
         if (idea.id === focusedDivId || idea.id === focusedIdeaId) {
@@ -1559,12 +1486,13 @@ const App = () => {
         columnRef.current.appendChild(ideaDiv);
       });
     } else {
-      // Add placeholder as a DOM element
+      console.log(`Adding placeholder to empty column ${columnId}`);
+      // Add placeholder as a DOM element for empty columns
       const placeholderDiv = document.createElement('div');
-      placeholderDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 hover:bg-white/[2%] rounded-lg cursor-text';
-      placeholderDiv.style.color = 'rgba(255, 255, 255, 0.3)'; // Force color with inline style
+      placeholderDiv.className = 'idea-item flex justify-center items-center p-2 pb-3 hover:bg-white/[2%] rounded-lg cursor-pointer';
+      placeholderDiv.style.color = 'rgba(255, 255, 255, 0.3)';
+      placeholderDiv.textContent = 'No ideas yet';
       placeholderDiv.setAttribute('data-idea-id', 'placeholder');
-      placeholderDiv.textContent = 'Add ideas';
       columnRef.current.appendChild(placeholderDiv);
     }
 
@@ -1585,6 +1513,21 @@ const App = () => {
 
   // Track focused idea for sidebar
   const handleSelectionChange = () => {
+    // Skip selection change if suppressed (needed during Enter key handling)
+    if (suppressSelectionChangeRef.current) {
+      return;
+    }
+
+    // Check if any column is in edit mode - if so, do nothing
+    // This completely separates edit mode from the context sidebar
+    const isAnyColumnInEditMode = Object.values(columnRefs.current).some(ref => 
+      ref && ref.current && ref.current.getAttribute('data-edit-mode') === 'true'
+    );
+    
+    if (isAnyColumnInEditMode) {
+      return; // Don't update the sidebar when in edit mode
+    }
+
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
 
@@ -1654,34 +1597,18 @@ const App = () => {
 
   // Handle tab click to toggle utility sidebar
   const handleTabClick = (tabName) => {
-    // If clicking the active tab, close it; otherwise, open the clicked tab
+    // If any column is in edit mode with unsaved changes, prevent tab switching
+    if (isAnyColumnEditing) {
+      console.log("Cannot switch tabs while editing a column");
+      return;
+    }
+    
+    // Toggle the tab (close if clicking on active tab)
     setActiveTab(activeTab === tabName ? null : tabName);
   };
 
-  // Clean up empty ideas on page refresh
-  const cleanupEmptyIdeas = async (ideasData) => {
-    try {
-      const emptyIdeas = ideasData.filter(idea => {
-        // Check if content is empty or just whitespace/non-breaking space
-        const content = idea.content || '';
-        const strippedContent = content.replace(/&nbsp;|\u00A0|\s/g, '');
-        return strippedContent === '';
-      });
-
-      if (emptyIdeas.length > 0) {
-        console.log(`Cleaning up ${emptyIdeas.length} empty ideas on page refresh`);
-
-        // Delete all empty ideas
-        const deletePromises = emptyIdeas.map(idea =>
-          deleteDoc(doc(db, 'ideas', idea.id))
-        );
-
-        await Promise.all(deletePromises);
-      }
-    } catch (error) {
-      console.error("Error cleaning up empty ideas:", error);
-    }
-  };
+  // Clean up empty ideas on page refresh - Using hook version now
+  // This local implementation is removed in favor of the hook version
 
   // Load notes for the focused idea
   useEffect(() => {
@@ -1808,13 +1735,21 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
   // Handle note input change
   const handleNoteInputChange = (e) => {
     setNoteInputValue(e.target.value);
+    // Remove the forced focus that's causing typing issues
   };
 
   // Handle note input key down events
   const handleNoteInputKeyDown = (e) => {
-    if (e.key === 'Enter' && e.ctrlKey) {
+    // Prevent event propagation but allow normal keyboard behavior
+    e.stopPropagation();
+    
+    if ((e.key === 'Enter' && e.ctrlKey) || (e.key === 'Enter' && e.metaKey)) {
       e.preventDefault();
-      handleAddNote();
+      
+      // Only add if there's actual content
+      if (noteInputValue.trim()) {
+        handleAddNote();
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       setNoteInputVisible(false);
@@ -2066,6 +2001,308 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
     }
   };
 
+  // Reinitialize column content when tag selection changes
+  useEffect(() => {
+    // Skip on first render
+    if (isInitialLoad) return;
+
+    // Reinitialize content for untagged column if it's selected
+    if (selectedTags['untagged']) {
+      initializeColumnContent('untagged', untaggedIdeas);
+    }
+
+    // Reinitialize content for each selected tag
+    tags.forEach(tag => {
+      if (selectedTags[tag.id]) {
+        const taggedIdeas = getIdeasByTag(tag.id);
+        initializeColumnContent(tag.id, taggedIdeas);
+      }
+    });
+  }, [selectedTags, untaggedIdeas, tagIdeasMap, isInitialLoad, tags, getIdeasByTag, initializeColumnContent]);
+
+  // Clean up empty ideas
+  const handleCleanupEmptyIdeas = async (ideasData) => {
+    try {
+      const emptyIdeas = ideasData.filter(idea => {
+        // Check if content is empty or just whitespace/non-breaking space
+        const content = idea.content || '';
+        const strippedContent = content.replace(/&nbsp;|\u00A0|\s/g, '');
+        return strippedContent === '';
+      });
+
+      if (emptyIdeas.length > 0) {
+        console.log(`Cleaning up ${emptyIdeas.length} empty ideas`);
+
+        // Delete all empty ideas
+        for (const idea of emptyIdeas) {
+          await deleteIdea(idea.id);
+        }
+        
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("Error cleaning up empty ideas:", error);
+      return false;
+    }
+  };
+
+  // Update idea content in Firebase
+  const handleUpdateIdeaContent = async (ideaId, content) => {
+    if (!ideaId) return false;
+    
+    try {
+      // Use the hook version to update the content
+      const result = await updateIdeaContent(ideaId, content);
+      
+      // Update UI in all columns where this idea appears
+      if (result) {
+        updateIdeaInAllColumns(ideaId, content);
+      }
+      
+      return result;
+    } catch (error) {
+      console.error("Error updating idea content:", error);
+      return false;
+    }
+  };
+
+  // Delete an idea
+  const handleDeleteIdea = async (ideaId) => {
+    try {
+      // Use the hook version to delete the idea
+      const result = await deleteIdea(ideaId);
+      
+      // Additional UI cleanup could be done here if needed
+      
+      return result;
+    } catch (error) {
+      console.error("Error deleting idea:", error);
+      return false;
+    }
+  };
+
+  // Fix the clearColumnContent function to properly handle all column types
+  const clearColumnContent = (columnType, columnId) => {
+    const columnRef = columnType === 'untagged'
+      ? columnRefs.current.untagged
+      : columnRefs.current[columnId];
+    
+    if (columnRef && columnRef.current) {
+      console.log(`Clearing content for ${columnType}:${columnId}`);
+      columnRef.current.innerHTML = '';
+    } else {
+      console.warn(`Could not find column ref for ${columnType}:${columnId}`);
+      console.log('Available refs:', Object.keys(columnRefs.current));
+    }
+  };
+
+  // Update handleEditModeChange to use the fixed clearColumnContent
+  const handleEditModeChange = async (columnType, columnId, isEditMode, textareaContent) => {
+    // Get the column reference
+    const columnRef = columnType === 'untagged'
+      ? columnRefs.current.untagged
+      : columnRefs.current[columnId];
+    
+    // Update the global editing state to track if any column is being edited
+    setIsAnyColumnEditing(isEditMode);
+    
+    if (columnRef && columnRef.current) {
+      // Set the edit mode attribute on the column element
+      columnRef.current.setAttribute('data-edit-mode', isEditMode);
+      
+      // If entering edit mode, clear the content so the textarea is the only child
+      if (isEditMode) {
+        console.log(`Entering edit mode for ${columnType}:${columnId}`);
+        // Clear any focused idea to prevent context sidebar conflicts
+        setFocusedIdeaId(null);
+        
+        // Close any open inputs in the sidebar
+        if (tagInputVisible) {
+          setTagInputVisible(false);
+          setTagInputValue('');
+        }
+        
+        if (noteInputVisible) {
+          setNoteInputVisible(false);
+          setNoteInputValue('');
+        }
+        
+        clearColumnContent(columnType, columnId);
+        return; // Exit early - don't reinitialize content when entering edit mode
+      }
+    }
+    
+    // Only process content when exiting edit mode with content
+    if (!isEditMode && textareaContent !== undefined) {
+      // User is exiting edit mode with content to process
+      console.log(`Processing content from ${columnType}:${columnId}`);
+      
+      // Split the content by line breaks to get individual ideas
+      const ideaContents = textareaContent.split('\n')
+        .map(text => text.trim())
+        .filter(text => text.length > 0);
+      
+      console.log(`Found ${ideaContents.length} ideas to process`);
+      
+      // Get the existing ideas for this column
+      let columnIdeas = [];
+      if (columnType === 'untagged') {
+        columnIdeas = untaggedIdeas;
+      } else if (columnType === 'tag') {
+        columnIdeas = getIdeasByTag(columnId);
+      } else if (columnType === 'all') {
+        columnIdeas = ideas;
+      }
+      
+      // Process all ideas
+      const existingIdeaIds = columnIdeas.map(idea => idea.id);
+      console.log(`Column has ${existingIdeaIds.length} existing ideas`);
+      
+      let index = 0;
+      let updatedIdeas = false;
+      
+      // Create or update ideas
+      for (const content of ideaContents) {
+        if (index < existingIdeaIds.length) {
+          // Update existing idea
+          const ideaId = existingIdeaIds[index];
+          console.log(`Updating idea ${ideaId} with content: ${content.substring(0, 20)}...`);
+          await handleUpdateIdeaContent(ideaId, content);
+          updatedIdeas = true;
+        } else {
+          // Create new idea
+          const tagId = columnType === 'tag' ? columnId : null;
+          console.log(`Creating new idea with content: ${content.substring(0, 20)}...`, `tagId: ${tagId}`);
+          const newIdeaId = await handleCreateNewIdea(content, tagId);
+          console.log(`New idea created with ID: ${newIdeaId}`);
+          if (newIdeaId) {
+            updatedIdeas = true;
+          } else {
+            console.error(`Failed to create new idea with content: ${content.substring(0, 20)}...`);
+          }
+        }
+        index++;
+      }
+      
+      // If there are fewer ideas in the textarea than in the database, delete the extras
+      for (let i = index; i < existingIdeaIds.length; i++) {
+        console.log(`Deleting extra idea ${existingIdeaIds[i]}`);
+        await handleDeleteIdea(existingIdeaIds[i]);
+        updatedIdeas = true;
+      }
+      
+      // Force re-fetch of ideas from Firestore if updates were made
+      if (updatedIdeas) {
+        console.log('Updates were made, re-fetching ideas from Firestore');
+        
+        // Immediately update the local state with what we know
+        if (columnType === 'tag' && tagId) {
+          // We should manually trigger a fetch of the tag-idea relationships
+          try {
+            const ideaTagsQuery = query(ideaTagsRef);
+            getDocs(ideaTagsQuery).then((snapshot) => {
+              const relationships = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+              }));
+              
+              // Group ideas by tag ID
+              const tagToIdeas = {};
+              relationships.forEach(rel => {
+                if (!tagToIdeas[rel.tagId]) {
+                  tagToIdeas[rel.tagId] = [];
+                }
+                if (!tagToIdeas[rel.tagId].includes(rel.ideaId)) {
+                  tagToIdeas[rel.tagId].push(rel.ideaId);
+                }
+              });
+              
+              console.log('Updated tag-idea relationships', tagToIdeas);
+              setTagIdeasMap(tagToIdeas);
+              
+              // Reinitialize columns with fresh data
+              if (columnType === 'tag') {
+                const taggedIdeas = ideas.filter(idea => 
+                  tagToIdeas[tagId] && tagToIdeas[tagId].includes(idea.id)
+                );
+                console.log(`Reinitializing column ${tagId} with ${taggedIdeas.length} ideas based on fresh relationships`);
+                initializeColumnContent(tagId, taggedIdeas);
+              }
+            }).catch(error => {
+              console.error("Error fetching tag-idea relationships:", error);
+            });
+          } catch (error) {
+            console.error("Error setting up tag-idea relationship query:", error);
+          }
+        }
+        
+        // Add a small delay to allow Firestore to update
+        setTimeout(async () => {
+          // Force a refresh by directly querying for new data
+          console.log('Triggering data refresh after editing ideas');
+          const ideasQuery = query(ideasRef, orderBy('updatedAt', 'desc'));
+          getDocs(ideasQuery).then(snapshot => {
+            const refreshedIdeas = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            }));
+            console.log(`Fetched ${refreshedIdeas.length} ideas directly`);
+            setIdeas(refreshedIdeas);
+          }).catch(error => {
+            console.error('Error refreshing ideas:', error);
+          });
+        }, 500);
+
+        // Immediately reinitialize the columns with the latest data we have for better UX
+        if (columnType === 'untagged') {
+          // For untagged ideas, reinitialize with current data, will be updated later
+          initializeColumnContent('untagged', untaggedIdeas);
+        } else if (columnType === 'tag') {
+          // For tagged ideas, get the current ideas with this tag to display
+          const taggedIdeas = ideas.filter(idea => {
+            // Check if this idea is associated with this tag
+            const ideaIds = tagIdeasMap[columnId] || [];
+            return ideaIds.includes(idea.id);
+          });
+          initializeColumnContent(columnId, taggedIdeas);
+        } else if (columnType === 'all') {
+          initializeColumnContent('all', ideas);
+        }
+      } else {
+        // Re-initialize the column content with the updated data after saving
+        if (columnType === 'untagged') {
+          initializeColumnContent('untagged', untaggedIdeas);
+        } else if (columnType === 'tag') {
+          const taggedIdeas = ideas.filter(idea => {
+            // Check if this idea is associated with this tag
+            const ideaIds = tagIdeasMap[columnId] || [];
+            return ideaIds.includes(idea.id);
+          });
+          initializeColumnContent(columnId, taggedIdeas);
+        } else if (columnType === 'all') {
+          initializeColumnContent('all', ideas);
+        }
+      }
+    } else if (!isEditMode) {
+      // Exiting edit mode without content to process (discarding)
+      console.log(`Exiting edit mode (discard) for ${columnType}:${columnId}`);
+      // Re-initialize the column content with the original data
+      if (columnType === 'untagged') {
+        initializeColumnContent('untagged', untaggedIdeas);
+      } else if (columnType === 'tag') {
+        const taggedIdeas = ideas.filter(idea => {
+          // Check if this idea is associated with this tag
+          const ideaIds = tagIdeasMap[columnId] || [];
+          return ideaIds.includes(idea.id);
+        });
+        initializeColumnContent(columnId, taggedIdeas);
+      } else if (columnType === 'all') {
+        initializeColumnContent('all', ideas);
+      }
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col text-white/80 text-sm bg-neutral-900 selection:bg-rose-500 selection:text-white selection:text-white caret-rose-500 font-pressura font-light dark:[color-scheme:dark]">
 
@@ -2136,8 +2373,9 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                     {briefSaveStatus === 'needs-save' && (
                       <button
                         onClick={forceSaveBrief}
-                        className="text-white/40 hover:text-white bg-white/[2%] hover:bg-white/[5%] rounded-lg px-3 pt-1 pb-2 -mx-3 -mt-1 -mb-2"
+                        className="flex items-center text-white/40 hover:text-white bg-white/[2%] hover:bg-white/[5%] rounded-lg px-3 pt-1 pb-2 -mx-3 -mt-1 -mb-2"
                       >
+                        <span className="material-symbols-rounded text-base mr-1">save</span>
                         Save
                       </button>
                     )}
@@ -2146,8 +2384,9 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                         <span className="text-red-400">Error saving</span>
                         <button
                           onClick={forceSaveBrief}
-                          className="text-white/40 hover:text-white bg-white/[2%] hover:bg-white/[5%] rounded-lg px-3 pt-1 pb-2 -mx-3 -mt-1 -mb-2"
+                          className="flex items-center text-white/40 hover:text-white bg-white/[2%] hover:bg-white/[5%] rounded-lg px-3 pt-1 pb-2 -mx-3 -mt-1 -mb-2"
                         >
+                          <span className="material-symbols-rounded text-base mr-1">refresh</span>
                           Retry
                         </button>
                       </div>
@@ -2279,50 +2518,15 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
                 {/* Only show Tags list when groupByTag is true or in horizontal layout */}
                 {(groupByTag || viewLayout === 'horizontal') && (
-                  <>
-
-                    <div className="flex flex-row items-center justify-between gap-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
-                      <div className="w-full flex flex-row items-center gap-1 pt-1 pb-2 select-none" onClick={toggleAllTags}>
-                        <span className={`material-symbols-rounded text-base ${selectionState === 'all' || selectionState === 'indeterminate' ? 'filled' : ''}`}>
-                          {selectionState === 'all' ? 'check_box' :
-                            selectionState === 'indeterminate' ? 'indeterminate_check_box' :
-                              'check_box_outline_blank'}
-                        </span>
-                        <span className="">Tags</span>
-                        {/* <span className="ml-1 opacity-40">{globalTagCounts.total || ideas.length}</span> */}
-                      </div>
-                      <div className="flex flex-row items-center gap-1">
-                        <span className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:scale-125 duration-100 ease-in-out hover:text-white">tune</span>
-                      </div>
-                    </div>
-
-                    {/* Untagged ideas item */}
-                    <div
-                      className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
-                      onClick={() => toggleTagSelection('untagged')}
-                    >
-                      <span className={`material-symbols-rounded text-base ${selectedTags['untagged'] ? 'filled' : ''} ${!selectedTags['untagged'] ? 'opacity-10' : ''}`}>
-                        {selectedTags['untagged'] ? 'check' : 'check_box_outline_blank'}
-                      </span>
-                      <span className={`${!selectedTags['untagged'] ? 'opacity-40' : ''}`}>untagged</span>
-                      <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
-                    </div>
-
-                    {/* show a list of tags */}
-                    {tags.map(tag => (
-                      <div
-                        key={tag.id}
-                        className="flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 text-white leading-tight hover:bg-white/[2%] rounded-lg cursor-pointer"
-                        onClick={() => toggleTagSelection(tag.id)}
-                      >
-                        <span className={`material-symbols-rounded text-base ${selectedTags[tag.id] ? 'filled' : ''} ${!selectedTags[tag.id] ? 'opacity-10' : ''}`}>
-                          {selectedTags[tag.id] ? 'check' : 'check_box_outline_blank'}
-                        </span>
-                        <span className={`${!selectedTags[tag.id] ? 'opacity-40' : ''}`}>{tag.name}</span>
-                        <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
-                      </div>
-                    ))}
-                  </>
+                  <TagSelector 
+                    tags={tags}
+                    selectedTags={selectedTags}
+                    toggleTagSelection={toggleTagSelection}
+                    toggleAllTags={toggleAllTags}
+                    selectionState={selectionState}
+                    untaggedCount={untaggedIdeas.length}
+                    tagCounts={globalTagCounts}
+                  />
                 )}
               </>
             )}
@@ -2404,98 +2608,68 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
         <div className={`w-full flex ${viewLayout === 'horizontal' ? 'flex-row gap-3' : 'flex-col'} p-3 pt-0 ${viewLayout === 'vertical' && !groupByTag ? 'h-full' : 'overflow-auto'}`}>
           {/* When in vertical view, if groupByTag is false, show all ideas in a single column */}
           {viewLayout === 'vertical' && !groupByTag ? (
-            <div className="relative min-w-[400px] flex flex-1 flex-col h-full">
-              <div className={`min-h-14 flex justify-center items-center p-4 ${viewLayout === 'vertical' && groupByTag ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05)]' : ''}`}>
-                <div className="flex items-center -mx-1 pl-2 pr-3 whitespace-nowrap select-none">
-                  {/* <span className="material-symbols-rounded text-base">notes</span> */}
-                  All ideas <span className="ml-1 opacity-40">{ideas.length}</span>
-                </div>
-              </div>
-              <div
-                ref={columnRefs.current.all}
-                contentEditable
-                spellCheck="false"
-                className="flex-1 p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-                onInput={() => handleChange('all', 'all')}
-                onKeyDown={(e) => handleKeyDown(e, 'all', 'all')}
-                onKeyPress={(e) => handleKeyPress(e, 'all', 'all')}
-                onPaste={(e) => handlePaste(e, 'all', 'all')}
-                onFocus={() => handleFocus('all', 'all')}
-                onBlur={() => handleBlur('all', 'all')}
-              >
-                {/* Content will be set via initializeColumnContent */}
-              </div>
-            </div>
+            <IdeaColumn
+              title="All ideas"
+              count={ideas.length}
+              isSticky={viewLayout === 'vertical' && groupByTag}
+              handleChange={handleChange}
+              handleKeyDown={handleKeyDown}
+              handleKeyPress={handleKeyPress}
+              handlePaste={handlePaste}
+              handleFocus={handleFocus}
+              handleBlur={handleBlur}
+              columnType="all"
+              columnId="all"
+              ref={columnRefs.current.all}
+              onEditModeChange={(isEditMode, textareaContent) => handleEditModeChange('all', 'all', isEditMode, textareaContent)}
+              setFocusedIdeaId={setFocusedIdeaId}
+              groupByTag={groupByTag}
+            />
           ) : (
             <>
               {/* Untagged column - always display if selected */}
               {selectedTags['untagged'] && (
-                <div className="relative min-w-[400px] flex flex-1 flex-col">
-                  <div
-                    className={`
-                  min-h-14 flex justify-center items-center p-4 mx-4
-                  ${viewLayout === 'vertical' && groupByTag
-                        ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]'
-                        : ''
-                      }
-                `}
-                  >
-                    <div className="flex items-center -mx-1 pl-2 pr-3 whitespace-nowrap select-none">
-                      <span className="material-symbols-rounded text-base">tag</span>
-                      untagged <span className="ml-1 opacity-40">{untaggedIdeas.length}</span>
-                    </div>
-                  </div>
-                  <div
-                    ref={columnRefs.current.untagged}
-                    contentEditable
-                    spellCheck="false"
-                    className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-                    onInput={() => handleChange('untagged', 'untagged')}
-                    onKeyDown={(e) => handleKeyDown(e, 'untagged', 'untagged')}
-                    onKeyPress={(e) => handleKeyPress(e, 'untagged', 'untagged')}
-                    onPaste={(e) => handlePaste(e, 'untagged', 'untagged')}
-                    onFocus={() => handleFocus('untagged', 'untagged')}
-                    onBlur={() => handleBlur('untagged', 'untagged')}
-                  >
-                    {/* Content will be set via initializeColumnContent */}
-                  </div>
-                </div>
+                <IdeaColumn
+                  title="untagged"
+                  count={untaggedIdeas.length}
+                  isSticky={viewLayout === 'vertical' && groupByTag}
+                  handleChange={handleChange}
+                  handleKeyDown={handleKeyDown}
+                  handleKeyPress={handleKeyPress}
+                  handlePaste={handlePaste}
+                  handleFocus={handleFocus}
+                  handleBlur={handleBlur}
+                  columnType="untagged"
+                  columnId="untagged"
+                  ref={columnRefs.current.untagged}
+                  onEditModeChange={(isEditMode, textareaContent) => handleEditModeChange('untagged', 'untagged', isEditMode, textareaContent)}
+                  setFocusedIdeaId={setFocusedIdeaId}
+                  groupByTag={groupByTag}
+                />
               )}
 
               {/* Tagged columns - display one per selected tag */}
               {getTagsWithIdeas().map(tag => {
                 if (selectedTags[tag.id]) {
                   return (
-                    <div key={tag.id} className="relative min-w-[400px] flex flex-1 flex-col">
-                      <div
-                        className={`
-                        min-h-14 flex justify-center items-center p-4 mx-4
-                        ${viewLayout === 'vertical' && groupByTag
-                            ? 'sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]'
-                            : ''
-                          }
-                      `}
-                      >
-                        <div className="flex items-center -mx-1 pl-2 pr-3 whitespace-nowrap select-none">
-                          <span className="material-symbols-rounded text-base">tag</span>
-                          {tag.name} <span className="ml-1 opacity-40">{globalTagCounts[tag.id] || 0}</span>
-                        </div>
-                      </div>
-                      <div
-                        ref={columnRefs.current[tag.id]}
-                        contentEditable
-                        spellCheck="false"
-                        className="h-full p-4 focus:outline-none text-center leading-tight rounded-2xl shadow-[inset_0_0_1px_rgba(255,255,255,0.25)] whitespace-pre-wrap overflow-auto cursor-default select-none"
-                        onInput={() => handleChange('tag', tag.id)}
-                        onKeyDown={(e) => handleKeyDown(e, 'tag', tag.id)}
-                        onKeyPress={(e) => handleKeyPress(e, 'tag', tag.id)}
-                        onPaste={(e) => handlePaste(e, 'tag', tag.id)}
-                        onFocus={() => handleFocus('tag', tag.id)}
-                        onBlur={() => handleBlur('tag', tag.id)}
-                      >
-                        {/* Content will be set via initializeColumnContent */}
-                      </div>
-                    </div>
+                    <IdeaColumn
+                      key={tag.id}
+                      title={tag.name}
+                      count={globalTagCounts[tag.id] || 0}
+                      isSticky={viewLayout === 'vertical' && groupByTag}
+                      handleChange={handleChange}
+                      handleKeyDown={handleKeyDown}
+                      handleKeyPress={handleKeyPress}
+                      handlePaste={handlePaste}
+                      handleFocus={handleFocus}
+                      handleBlur={handleBlur}
+                      columnType="tag"
+                      columnId={tag.id}
+                      ref={columnRefs.current[tag.id]}
+                      onEditModeChange={(isEditMode, textareaContent) => handleEditModeChange('tag', tag.id, isEditMode, textareaContent)}
+                      setFocusedIdeaId={setFocusedIdeaId}
+                      groupByTag={groupByTag}
+                    />
                   );
                 }
                 return null;
@@ -2508,6 +2682,19 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                     <div
                       className="flex items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 group-hover:bg-white/5 group-hover:text-white rounded-lg whitespace-nowrap select-none cursor-pointer"
                       onClick={() => {
+                        // Close any open inputs in the context sidebar
+                        if (focusedIdeaId) {
+                          if (tagInputVisible) {
+                            setTagInputVisible(false);
+                            setTagInputValue('');
+                          }
+                          
+                          if (noteInputVisible) {
+                            setNoteInputVisible(false);
+                            setNoteInputValue('');
+                          }
+                        }
+                        
                         setNewTagInputVisible(true);
                         setTimeout(() => {
                           if (newTagInputRef && newTagInputRef.current) {
@@ -2552,9 +2739,9 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
         {/* Context sidebar */}
         {
-          focusedIdeaId && focusedIdea && (
+          !isAnyColumnEditing && focusedIdeaId && focusedIdea && (
             <div
-              className="idea-sidebar h-full min-w-[400px] flex flex-1 flex-col px-8 overflow-auto shadow-[-1px_0_0_rgba(255,255,255,0.05)]"
+              className="idea-sidebar h-full min-w-[400px] flex flex-1 flex-col px-8 overflow-auto shadow-[-1px_0_0_rgba(255,255,255,0.05)] relative z-30"
               onMouseDown={(e) => {
                 // Prevent the mousedown from triggering a selection change
                 // This is critical since selection changes can cause the sidebar to close
@@ -2563,31 +2750,68 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
               }}
               onClick={(e) => {
                 // Prevent click events from bubbling up
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onKeyDown={(e) => {
+                // Prevent keydown events from affecting idea columns
                 e.stopPropagation();
               }}
             >
               <div className="flex flex-1 flex-col justify-between">
                 <div className="flex flex-1 flex-col">
-                  <div className="relative min-h-14 flex flex-row justify-between items-center gap-6 py-4 sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]">
-                    {isTitleEditing ? (
-                      <input
-                        ref={titleEditRef}
-                        type="text"
-                        value={titleEditValue}
-                        onChange={handleTitleEditChange}
-                        onKeyDown={handleTitleEditKeyDown}
-                        onBlur={saveTitleEdit}
-                        className="h-10 w-[calc(100%+40px)] flex items-center px-3 -mx-3 -my-2 bg-[#282828] border-none rounded-lg outline-none"
-                        autoFocus
-                      />
-                    ) : (
-                      <div
-                        className="h-10 w-[calc(100%-12px)] flex items-center px-3 -mx-3 -my-2 rounded-lg outline-none leading-tight hover:bg-white/[2%] cursor-text"
-                        onClick={startTitleEdit}
-                      >
-                        {stripHtmlAndDecodeEntities(focusedIdea.content)}
-                      </div>
-                    )}
+                  <div className="relative min-h-14 flex flex-row justify-between items-center py-4 sticky top-0 z-10 bg-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.05),16px_0_0_rgba(23,23,23,1),-16px_0_0_rgba(23,23,23,1)]">
+                    <div 
+                      className="h-10 w-full flex items-center px-3 -mx-3 -my-2 mr-10 rounded-lg outline-none leading-tight cursor-pointer"
+                      onClick={() => {
+                        // Find the idea in the main column
+                        const ideaId = focusedIdeaId;
+                        if (!ideaId) return;
+                        
+                        // Find which tag(s) this idea belongs to
+                        const tags = ideaTags;
+                        let foundInColumn = false;
+                        
+                        // First try to find in tag columns
+                        for (const tag of tags) {
+                          const columnRef = columnRefs.current[tag.id];
+                          if (columnRef && columnRef.current) {
+                            const ideaDiv = columnRef.current.querySelector(`[data-idea-id="${ideaId}"]`);
+                            if (ideaDiv) {
+                              // Idea found in this column
+                              ideaDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              ideaDiv.focus();
+                              
+                              // Apply focus styling
+                              ideaDiv.classList.remove('text-white/60');
+                              ideaDiv.classList.add('text-white');
+                              ideaDiv.classList.add('idea-item-focused');
+                              ideaDiv.classList.add('bg-neutral-800');
+                              
+                              foundInColumn = true;
+                              break;
+                            }
+                          }
+                        }
+                        
+                        // If not found in tag columns, try the untagged column
+                        if (!foundInColumn && columnRefs.current.untagged && columnRefs.current.untagged.current) {
+                          const ideaDiv = columnRefs.current.untagged.current.querySelector(`[data-idea-id="${ideaId}"]`);
+                          if (ideaDiv) {
+                            ideaDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            ideaDiv.focus();
+                            
+                            // Apply focus styling
+                            ideaDiv.classList.remove('text-white/60');
+                            ideaDiv.classList.add('text-white');
+                            ideaDiv.classList.add('idea-item-focused');
+                            ideaDiv.classList.add('bg-neutral-800');
+                          }
+                        }
+                      }}
+                    >
+                      {stripHtmlAndDecodeEntities(focusedIdea.content)}
+                    </div>
                     <span
                       className={`absolute top-1/2 -translate-y-1/2 z-10 right-2 material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled p-1`}
                       onMouseDown={(e) => {
@@ -2616,49 +2840,45 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                       e.preventDefault();
                     }}
                   >
-                    <div className="flex flex-row flex-wrap items-center -mx-2">
-                      {/* Display tags for this idea */}
+                    {/* Tags section - use the TagBadge component */}
+                    <div className="flex flex-wrap gap-4 ">
                       {ideaTags.map(tag => (
-                        <div key={tag.id} className="group flex items-center -mx-1 pb-1 pl-2 pr-3 hover:bg-white/5 rounded-lg whitespace-nowrap select-none">
-                          <span className="group-hover:hidden material-symbols-rounded text-base">tag</span>
-                          <span
-                            className="hidden group-hover:block hover:scale-125 duration-100 ease-in-out material-symbols-rounded text-base cursor-pointer"
-                            onMouseDown={(e) => {
-                              e.stopPropagation();
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRemoveTag(tag.id);
-                            }}
-                          >
-                            close
-                          </span>
-                          {tag.name}
-                        </div>
+                        <TagBadge
+                          key={tag.id}
+                          name={tag.name}
+                          onRemove={() => handleRemoveTagFromIdea(tag.id, focusedIdeaId)}
+                        />
                       ))}
-
-                      {/* Add new tag button */}
-                      <div
-                        className="w-fit flex justify-center items-center -mx-1 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg whitespace-nowrap cursor-pointer"
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setTagInputVisible(!tagInputVisible);
-                          setTagInputValue('');
-                        }}
-                      >
-                        <span className="material-symbols-rounded text-base">add</span>
-                        Tag
-                      </div>
+                      
+                      {/* Add tag button - only show if an idea is focused */}
+                      {focusedIdeaId && (
+                        <div
+                          className="w-fit flex justify-center items-center -mx-3 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg whitespace-nowrap cursor-pointer"
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            // Close note input if it's open
+                            if (noteInputVisible) {
+                              setNoteInputVisible(false);
+                              setNoteInputValue('');
+                            }
+                            setTagInputVisible(!tagInputVisible);
+                            setTagInputValue('');
+                          }}
+                        >
+                          <span className="material-symbols-rounded text-base">add</span>
+                          Tag
+                        </div>
+                      )}
                     </div>
 
                     {/* Add new tag input */}
                     {tagInputVisible && (
                       <div
-                        className="flex flex-col -mx-3 mt-2 text-white bg-white/[2%] whitespace-nowrap rounded-lg overflow-clip"
+                        className="flex flex-col -mx-3 mt-2 text-white bg-white/[2%] whitespace-nowrap rounded-lg overflow-clip relative z-20"
                         onMouseDown={(e) => {
                           e.stopPropagation();
                           e.preventDefault();
@@ -2672,6 +2892,10 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                         <div
                           className="w-full h-10 flex items-center gap-2 px-3 bg-white/[5%] rounded-lg"
                           onMouseDown={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                          }}
+                          onClick={(e) => {
                             e.stopPropagation();
                             e.preventDefault();
                           }}
@@ -2693,7 +2917,6 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                             }}
                             onMouseDown={(e) => {
                               e.stopPropagation();
-                              // Don't prevent default here to allow text selection in the input
                             }}
                             autoFocus
                             className="w-full bg-transparent border-none outline-none placeholder:text-white/40"
@@ -2727,7 +2950,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                                 e.stopPropagation();
                                 e.preventDefault();
                                 if (!isApplied) {
-                                  addTagToIdea(tag.id, focusedIdeaId);
+                                  handleAddTagToIdea(tag.id, focusedIdeaId);
                                   setTagInputVisible(false);
                                   setTagInputValue('');
                                 }
@@ -2800,7 +3023,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                       {ideaNotes
                         .filter(note => note.ideaId === focusedIdeaId || note.isError)
                         .map(note => (
-                          <div key={note.id} className={`group w-full flex flex-col gap-4 p-3 rounded-lg ${note.isError ? 'bg-red-900/20' : 'hover:shadow-[inset_0_0_1px_rgba(255,255,255,0.25)]'}`}>
+                          <div key={note.id} className={`group w-full flex flex-col gap-4 p-3 rounded-lg overflow-auto ${note.isError ? 'bg-red-900/20' : 'hover:shadow-[inset_0_0_1px_rgba(255,255,255,0.25)]'}`}>
                             <div className={`whitespace-pre-wrap leading-tight break-words ${note.isIndex ? 'cursor-pointer' : ''}`}
                               onClick={note.isIndex ? () => {
                                 window.open('https://console.firebase.google.com/project/_/firestore/indexes', '_blank');
@@ -2831,26 +3054,51 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                       {!noteInputVisible ? (
                         <div
                           className="w-fit flex justify-center items-center mt-2 pb-1 pl-2 pr-3 text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg whitespace-nowrap cursor-pointer"
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            // Close tag input if it's open
+                            if (tagInputVisible) {
+                              setTagInputVisible(false);
+                              setTagInputValue('');
+                            }
                             setNoteInputVisible(true);
+                            // Focus the textarea after a short delay to ensure it's rendered
                             setTimeout(() => {
                               if (noteInputRef.current) {
                                 noteInputRef.current.focus();
                               }
-                            }, 0);
+                            }, 50);
                           }}
                         >
                           <span className="material-symbols-rounded text-base">add</span>
                           Note
                         </div>
                       ) : (
-                        <div className="w-full flex flex-col mt-2">
+                        <div 
+                          className="w-full flex flex-col mt-2 relative z-20"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                          }}
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                          }}
+                        >
                           <div className="w-full grid">
                             <textarea
                               ref={noteInputRef}
                               value={noteInputValue}
                               onChange={handleNoteInputChange}
                               onKeyDown={handleNoteInputKeyDown}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                              }}
+                              onMouseDown={(e) => {
+                                e.stopPropagation();
+                              }}
                               className="w-[calc(100%+24px)] min-h-[36px] p-3 mb-2 bg-white/[2%] focus:bg-white/[5%] rounded-lg border-none outline-none placeholder:text-white/40 resize-none overflow-hidden col-start-1 row-start-1"
                               placeholder="Add a note..."
                               autoFocus
@@ -2862,7 +3110,12 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                               {noteInputValue + '\n'}
                             </div>
                           </div>
-                          <div className="flex justify-between gap-2">
+                          <div className="flex justify-between gap-2"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                            }}
+                          >
                             <button
                               className="flex items-center pb-1 pl-2 pr-3 text-white bg-white/[2%] hover:bg-white/[5%] rounded-lg whitespace-nowrap cursor-pointer"
                               onClick={(e) => {
@@ -2876,7 +3129,9 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                             </button>
                             <button
                               className="flex items-center pb-1 pl-2 pr-3 text-white/40 hover:text-white rounded-lg whitespace-nowrap cursor-pointer"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
                                 setNoteInputVisible(false);
                                 setNoteInputValue('');
                               }}

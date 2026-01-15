@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, getDocs, where, limit, setDoc } from 'firebase/firestore';
-import { db, usingEmulator } from './firebase';
+import { db } from './firebase';
 import './index.css';
 import { initializeApp } from "firebase/app";
 import {
@@ -2024,190 +2024,45 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
     }));
   }, [untaggedIdeas, ideas, tagIdeasMap, isInitialLoad]);
 
-  // Load creative brief from Firebase
+  // Load creative brief from localStorage only during testing phase
   useEffect(() => {
-    // Load the creative brief from Firebase
-    const loadBrief = async () => {
-      try {
-        console.log("Attempting to load brief from Firebase...");
-        // Query for the existing brief document
-        const q = query(briefRef, limit(1));
-        const querySnapshot = await getDocs(q);
-
-        if (!querySnapshot.empty) {
-          // If a brief exists, use it
-          const briefDoc = querySnapshot.docs[0];
-          console.log("Brief loaded from Firebase:", briefDoc.id, briefDoc.data());
-          setBriefValue(briefDoc.data().content || '');
-          setBriefId(briefDoc.id);
-          setBriefSaveStatus('saved');
-        } else {
-          console.log("No brief found in Firebase, checking localStorage...");
-
-          // Check localStorage first
-          const savedBrief = localStorage.getItem('creativeBrief');
-
-          if (savedBrief && savedBrief.trim() !== '') {
-            console.log("Brief found in localStorage, creating in Firebase...");
-            // If no Firebase brief exists but we have one in localStorage, create it in Firebase
-            try {
-              const newBriefRef = await addDoc(briefRef, {
-                content: savedBrief,
-                createdAt: new Date(),
-                updatedAt: new Date()
-              });
-              console.log("New brief created with ID:", newBriefRef.id);
-              setBriefId(newBriefRef.id);
-              setBriefValue(savedBrief);
-              setBriefSaveStatus('saved');
-            } catch (innerError) {
-              console.error("Error creating brief from localStorage:", innerError);
-              // Still set the briefValue even if we couldn't save to Firebase
-              setBriefValue(savedBrief);
-              if (innerError.code === 'permission-denied' || innerError.message.includes('permission')) {
-                setBriefSaveStatus('local');
-              } else {
-                setBriefSaveStatus('needs-save');
-              }
-            }
-          } else {
-            console.log("No brief found in localStorage, creating empty document...");
-            // If no brief exists anywhere, initialize with empty content
-            try {
-              const newBriefRef = await addDoc(briefRef, {
-                content: '',
-                createdAt: new Date(),
-                updatedAt: new Date()
-              });
-              console.log("New empty brief created with ID:", newBriefRef.id);
-              setBriefId(newBriefRef.id);
-              setBriefSaveStatus('saved');
-            } catch (innerError) {
-              console.error("Error creating empty brief:", innerError);
-              if (innerError.code === 'permission-denied' || innerError.message.includes('permission')) {
-                setBriefSaveStatus('local');
-              } else {
-                setBriefSaveStatus('needs-save');
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error("Error loading brief from Firebase:", error);
-        // Fall back to localStorage if Firebase fails
-        const savedBrief = localStorage.getItem('creativeBrief');
-        if (savedBrief) {
-          console.log("Using brief from localStorage due to Firebase error");
-          setBriefValue(savedBrief);
-          if (error.code === 'permission-denied' || error.message.includes('permission')) {
-            setBriefSaveStatus('local');
-          } else {
-            setBriefSaveStatus('needs-save');
-          }
-        } else {
-          if (error.code === 'permission-denied' || error.message.includes('permission')) {
-            setBriefSaveStatus('local');
-          } else {
-            setBriefSaveStatus('error');
-          }
-        }
+    try {
+      // Just load from localStorage during testing phase
+      const savedBrief = localStorage.getItem('creativeBrief');
+      if (savedBrief) {
+        console.log("Using brief from localStorage for testing phase");
+        setBriefValue(savedBrief);
+        setBriefSaveStatus('local');
       }
-    };
-
-    loadBrief();
+    } catch (error) {
+      console.error("Error loading brief:", error);
+    }
   }, []);
 
-  // Handle brief input change
+  // Handle brief input change - simplified for testing phase
   const handleBriefChange = (e) => {
     const newValue = e.target.value;
     setBriefValue(newValue);
     
-    // Always save to localStorage as backup
+    // For testing phase, just save to localStorage
     localStorage.setItem('creativeBrief', newValue);
-    
-    // Try auto-saving to Firebase
-    if (briefId) {
-      // Show saving status
-      setBriefSaveStatus('saving');
-      
-      // Update the brief in Firebase
-      updateDoc(doc(db, 'brief', briefId), {
-        content: newValue,
-        updatedAt: new Date()
-      })
-      .then(() => {
-        // Set status to saved
-        setBriefSaveStatus('saved');
-        console.log("Brief successfully saved to Firebase");
-      })
-      .catch(error => {
-        // Show needs-save status to indicate manual save is needed
-        console.error("Error updating brief:", error);
-        setBriefSaveStatus('needs-save');
-        
-        // If we're using the local emulator or have permission issues,
-        // rely entirely on localStorage
-        if (error.code === 'permission-denied' || error.message.includes('permission')) {
-          // Just rely on localStorage and show "Saved locally"
-          setBriefSaveStatus('local');
-        }
-      });
-    } else {
-      // No briefId, need manual save
-      setBriefSaveStatus('needs-save');
-    }
+    setBriefSaveStatus('local');
   };
 
-  // Function to manually save brief to Firebase
+  // Function to save brief - simplified for testing phase
   const forceSaveBrief = async () => {
     try {
-      console.log("Force saving brief to Firebase...");
       setBriefSaveStatus('saving');
       
-      if (briefId) {
-        // Update existing document
-        console.log(`Updating existing brief document with ID: ${briefId}`);
-        await updateDoc(doc(db, 'brief', briefId), {
-          content: briefValue,
-          updatedAt: new Date()
-        });
-        console.log("Brief updated successfully");
-      } else {
-        // Create new document
-        console.log("Creating new brief document...");
-        const newBriefRef = await addDoc(briefRef, {
-          content: briefValue,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        });
-        setBriefId(newBriefRef.id);
-        console.log("New brief created with ID:", newBriefRef.id);
-      }
-      
-      // Always save to localStorage as backup
+      // For testing phase, just save to localStorage
       localStorage.setItem('creativeBrief', briefValue);
       
-      // Update status to saved
-      setBriefSaveStatus('saved');
-      console.log("Brief successfully saved to Firebase");
+      setTimeout(() => {
+        setBriefSaveStatus('local');
+      }, 500);
     } catch (error) {
       console.error("Error saving brief:", error);
-      console.error("Error code:", error.code);
-      console.error("Error message:", error.message);
-      
-      // Always save to localStorage as backup even if Firebase failed
-      localStorage.setItem('creativeBrief', briefValue);
-      
-      // If we're using the local emulator or have permission issues,
-      // rely entirely on localStorage
-      if (error.code === 'permission-denied' || error.message.includes('permission')) {
-        // Just rely on localStorage and show "Saved locally"
-        setBriefSaveStatus('local');
-        console.log("Falling back to local storage due to permission error");
-      } else {
-        setBriefSaveStatus('error');
-        console.log("Setting status to error");
-      }
+      setBriefSaveStatus('error');
     }
   };
 
@@ -2217,13 +2072,6 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
       <div className="h-full flex flex-row overflow-auto">
 
         <div className="h-full flex flex-1 flex-col px-2 shadow-[1px_0_0_rgba(255,255,255,0.05)]">
-          {/* Content here */}
-        </div>
-        
-        {/* Rest of your code */}
-        
-      </div>
-      
           {/* Utility sidebar tabs */}
 
           {/* tab: close sidebar */}
@@ -2333,7 +2181,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
             )}
             {activeTab === 'view' && (
               <>
-                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between w-full py-4 -mx-3 px-3 text-white">
+                <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full py-4 -mx-3 px-3 text-white">
                   <div className="w-full">View</div>
                   <span
                     className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
@@ -2355,7 +2203,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
                   {/* Time sort option */}
                   <div
-                    className={`min-h-9 flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 rounded-lg select-none ${sortBy === 'time' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
+                    className={`min-h-9 flex flex-row items-center -mx-3 pt-1 pb-2 px-3 rounded-lg select-none ${sortBy === 'time' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
                     onClick={() => handleSortByChange('time')}
                   >
                     {sortBy === 'time' && (
@@ -2368,7 +2216,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
                   {/* Alphabetical sort option */}
                   <div
-                    className={`min-h-9 flex flex-row items-center gap-1 -mx-3 pt-1 pb-2 px-3 rounded-lg select-none ${sortBy === 'alphabetical' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
+                    className={`min-h-9 flex flex-row items-center -mx-3 pt-1 pb-2 px-3 rounded-lg select-none ${sortBy === 'alphabetical' ? 'text-white' : 'text-white/40 hover:bg-white/[2%]'} cursor-pointer`}
                     onClick={() => handleSortByChange('alphabetical')}
                   >
                     {sortBy === 'alphabetical' && (
@@ -2481,19 +2329,22 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
             {activeTab === 'tools' && (
               <>
-                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between w-full py-4 -mx-3 px-3 text-white">
+                <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between w-full py-4 -mx-3 px-3 text-white">
+                  
                   <div className="w-full">Tools</div>
+                  
                   <span
                     className="material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled"
                     onClick={() => setActiveTab(null)}
                   >
                     close
                   </span>
+                  
                 </div>
 
                 <hr className="w-full border-[rgba(255,255,255,0.05)]" />
 
-                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between gap-2 w-full py-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
                   <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-neutral-500 text-black p-2 -my-4">
                     <span className="material-symbols-rounded text-base filled">swap_horiz</span>
                   </div>
@@ -2502,7 +2353,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
                 <hr className="w-full border-[rgba(255,255,255,0.05)]" />
 
-                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between gap-2 w-full py-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
                   <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-purple-500 text-black p-2 -my-4">
                     <span className="material-symbols-rounded text-base filled">rocket_launch</span>
                   </div>
@@ -2511,7 +2362,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
                 <hr className="w-full border-[rgba(255,255,255,0.05)]" />
 
-                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between gap-2 w-full py-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
                   <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-orange-500 text-black p-2 -my-4">
                     <span className="material-symbols-rounded text-base filled">import_contacts</span>
                   </div>
@@ -2520,7 +2371,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
 
                 <hr className="w-full border-[rgba(255,255,255,0.05)]" />
 
-                <div className="w-[calc(100%+23px)] flex flex-row items-center justify-between gap-2 w-full py-2 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
+                <div className="w-[calc(100%+25px)] flex flex-row items-center justify-between gap-2 w-full py-4 -mx-3 px-3 text-white hover:bg-white/[2%] rounded-lg cursor-pointer">
                   <div className="max-h-6 max-w-6 flex items-center justify-center rounded-full bg-teal-500 text-black p-2 -my-4">
                     <span className="material-symbols-rounded text-base filled">workspaces</span>
                   </div>
@@ -2738,7 +2589,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
                       </div>
                     )}
                     <span
-                      className={`absolute top-1/2 -translate-y-1/2 -z-10 right-0 material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled ${viewLayout === 'vertical' ? 'hidden' : ''}`}
+                      className={`absolute top-1/2 -translate-y-1/2 z-10 right-2 material-symbols-rounded text-base cursor-pointer text-white/40 hover:text-white hover:scale-125 duration-100 ease-in-out filled p-1`}
                       onMouseDown={(e) => {
                         // Stop propagation to prevent the parent handler from blocking this click
                         e.stopPropagation();
@@ -3083,14 +2934,7 @@ https://console.firebase.google.com/project/_/firestore/indexes`,
         <div className="flex flex-row items-center gap-1 -mx-3 pt-2 pb-3 px-4 select-none uppercase font-medium leading-tight text-white/40 hover:text-white hover:bg-white/[2%] rounded-lg cursor-pointer">Settings</div>
       </div>
     </div>
-
-    {/* Small development mode indicator in bottom corner */}
-    {import.meta.env.DEV && (
-      <div className="fixed bottom-2 right-2 text-xs opacity-30 hover:opacity-70 transition-opacity z-50">
-        {usingEmulator ? '🧪 Firebase Emulator Mode' : '☁️ Firebase Production Mode'}
-      </div>
-    )}
-  </div>
-);
+  );
+}
 
 export default App;

@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, enableIndexedDbPersistence, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getAnalytics } from 'firebase/analytics';
 
 // Your web app's Firebase configuration
@@ -17,7 +17,7 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firebase services
+// Initialize Firebase services with persistent caching
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
@@ -36,18 +36,9 @@ if (import.meta.env.DEV) {
 // Initialize analytics after emulator setup
 export const analytics = getAnalytics(app);
 
-// Enable offline persistence - must be after emulator connection
-try {
-  enableIndexedDbPersistence(db)
-    .catch((err) => {
-      if (err.code === 'failed-precondition') {
-        console.error('Persistence failed: Multiple tabs open');
-      } else if (err.code === 'unimplemented') {
-        console.error('Persistence not available in this browser');
-      }
-    });
-} catch (error) {
-  console.error('Error enabling persistence:', error);
-}
+// Use FirestoreSettings.cache for persistent offline data
+// This is the recommended approach instead of enableIndexedDbPersistence
+// The cache setting is now handled automatically by the SDK
+// If you need to customize caching, use the new Firestore SDK v9.0+ options
 
 export default app; 

@@ -9,6 +9,34 @@ html, body {
   background-color: #171717;
 }
 
+/* SCROLLBAR STYLING - Transparent tracks */
+/* Webkit browsers (Chrome, Safari, Edge) */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent !important;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Firefox */
+* {
+  scrollbar-color: rgba(255, 255, 255, 0.3) transparent !important;
+  scrollbar-width: thin;
+}
+
 /* MATERIAL SYMBOLS */
 
 .material-symbols-rounded {
